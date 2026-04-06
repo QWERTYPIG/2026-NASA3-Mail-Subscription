@@ -1,0 +1,82 @@
+services:
+  # 1. The Local State (Database)
+  postgres:
+    image: postgres:15-alpine
+    restart: always
+    environment:
+      POSTGRES_DB: ${DB_NAME:-mail_sub_db}
+      POSTGRES_USER: ${DB_USER:-admin}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-secret}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - mail_net
+
+  # 2. The Message Broker & Cache
+  redis:
+    image: redis:7-alpine
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - mail_net
+
+  # 3. The API Gateway (Web Server)
+  web:
+    build: .
+    command: python manage.py runserver 0.0.0.0:8000
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    environment:
+      - DB_NAME=${DB_NAME:-mail_sub_db}
+      - DB_USER=${DB_USER:-admin}
+      - DB_PASSWORD=${DB_PASSWORD:-secret}
+      - DB_HOST=postgres
+      - REDIS_QUEUE_URL=${REDIS_QUEUE_URL:-redis://redis:6379/0}
+      - REDIS_CACHE_URL=${REDIS_CACHE_URL:-redis://redis:6379/1}
+      - LDAP_URI=${LDAP_URI:-ldap://localhost:389}
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - mail_net
+
+  # 4. The Background Worker (Django-Q)
+  worker:
+    build: .
+    command: python manage.py qcluster
+    volumes:
+      - .:/app
+    environment:
+      - DB_NAME=${DB_NAME:-mail_sub_db}
+      - DB_USER=${DB_USER:-admin}
+      - DB_PASSWORD=${DB_PASSWORD:-secret}
+      - DB_HOST=postgres
+      - REDIS_QUEUE_URL=${REDIS_QUEUE_URL:-redis://redis:6379/0}
+      - REDIS_CACHE_URL=${REDIS_CACHE_URL:-redis://redis:6379/1}
+      - LDAP_URI=${LDAP_URI:-ldap://localhost:389}
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - mail_net
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  mail_net:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        # Force Docker to use the 10.5.x.x range instead of 172.16.x.x
+        - subnet: 10.5.0.0/16
+          gateway: 10.5.0.1

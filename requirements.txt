@@ -1,0 +1,8 @@
+Django>=4.2
+djangorestframework
+psycopg2-binary
+redis
+django-q2  # The actively maintained fork of django-q
+django-auth-ldap
+python-dotenv
+django-cors-headers
