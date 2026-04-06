@@ -24,34 +24,34 @@
 
 ### Login
 ```
-① React     →  POST /auth/login          →  Django
-② Django    →  Bind (django-auth-ldap)   →  LDAP
-③ Django    →  INSERT session            →  PostgreSQL
-④ Django    →  Set-Cookie                →  React
+① React     →  POST /api/v1/auth/login/             →  Django
+② Django    →  Bind (django-auth-ldap)              →  LDAP
+③ Django    →  INSERT session                       →  PostgreSQL
+④ Django    →  Set-Cookie                           →  React
 ```
 
 ### Fetch Subscription Data
 ```
-① React     →  GET /api/subscriptions   →  Django
-② Django    →  verify session cookie    →  PostgreSQL
-③ Django    →  SELECT alias + user_ids  →  PostgreSQL
-④ Django    →  JSON array               →  React
+① React     →  GET /api/v1/subscriptions/           →  Django
+② Django    →  verify session cookie                →  PostgreSQL
+③ Django    →  SELECT alias + user_id               →  PostgreSQL
+④ Django    →  JSON array                           →  React
 ```
 
 ### Update Subscription
 ```
-① React     →  PATCH /api/subscriptions →  Django
-② Django    →  check rate limit         →  Redis (TTL key)
-③ Django    →  UPDATE alias + enqueue   →  PostgreSQL
-④ Django    →  push task id             →  Redis (Django-Q)
-⑤ Django    →  202 Accepted             →  React
+① React     →  POST /api/v1/subscriptions/update/   →  Django
+② Django    →  check rate limit                     →  Redis (TTL key)
+③ Django    →  UPDATE alias + enqueue               →  PostgreSQL
+④ Django    →  push task id                         →  Redis (Django-Q)
+⑤ Django    →  202 Accepted                         →  React
 ```
 
 ### Background Sync (Django-Q worker)
 ```
 ① Django-Q  →  flush alias task queue   →  LDAP ou=Aliases  (每 3 分鐘)
 ② Django-Q  →  flush user task queue    →  LDAP ou=Aliases  (同一排程，alias 先)
-③ Django-Q  →  consistency check        →  LDAP vs PostgreSQL  (每 5 分鐘，獨立排程)
+③ Django-Q  →  consistency check        →  LDAP vs PostgreSQL  (flush 結束後立即執行)
 ```
 
 ---
