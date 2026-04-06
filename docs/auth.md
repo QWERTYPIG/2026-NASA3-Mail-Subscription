@@ -72,9 +72,4 @@ MIDDLEWARE = [
 
 使用者送出訂閱更新後，冷卻時間為 **10 分鐘**。冷卻中的請求回傳 `HTTP 429 Too Many Requests`，Response Body 附上剩餘秒數。
 
-> [!todo] Rate limit 實作方式
-> 目前有兩個候選方案，尚未決定：
-> - **Redis TTL**：寫入以 `user_uid` 為 key、TTL = 600 秒的 entry，key 存在即冷卻中。
-> - **DB timestamp**：在 user table 記錄最後操作時間，每次請求查詢比較。
->
-> 傾向採用 Redis TTL（不需額外 DB query、自動過期）。決定後更新此處並補充 [database](./docs/database.md) 的 user table 設計。
+採用 **Redis TTL**：使用者送出訂閱更新後，以 `user_uid` 為 key 寫入 Redis（index 1），TTL = 冷卻時間。key 存在即冷卻中，key 自動過期不需手動清除。不需要額外的 user table。
