@@ -69,48 +69,6 @@ uniqueMember: uid=r13922003,ou=people,dc=csie,dc=ntu,dc=edu,dc=tw
 
 ---
 
-## LDAP 操作指令格式
-
-### 新增訂閱者（MOD_ADD）
-
-```ldif
-dn: cn=ws-user,ou=Aliases,dc=csie,dc=ntu,dc=edu,dc=tw
-changetype: modify
-add: uniqueMember
-uniqueMember: uid=charlie,ou=people,dc=csie,dc=ntu,dc=edu,dc=tw
-```
-
-### 移除訂閱者（MOD_DELETE）
-
-```ldif
-dn: cn=ws-user,ou=Aliases,dc=csie,dc=ntu,dc=edu,dc=tw
-changetype: modify
-delete: uniqueMember
-uniqueMember: uid=charlie,ou=people,dc=csie,dc=ntu,dc=edu,dc=tw
-```
-
-### 新增 Alias Entry（Admin 操作）
-
-```ldif
-dn: cn=new-alias,ou=Aliases,dc=csie,dc=ntu,dc=edu,dc=tw
-changetype: add
-objectClass: groupOfUniqueNames
-cn: new-alias
-uniqueMember: uid=placeholder,ou=people,dc=csie,dc=ntu,dc=edu,dc=tw
-```
-
-> [!note] `groupOfUniqueNames` 要求至少一個 `uniqueMember`
-> 新增空 alias 時需放一個 placeholder member，待第一個真實訂閱者加入後再移除。
-
-### 刪除 Alias Entry（Admin 操作）
-
-```ldif
-dn: cn=old-alias,ou=Aliases,dc=csie,dc=ntu,dc=edu,dc=tw
-changetype: delete
-```
-
----
-
 ## Task Queue 優先順序
 
 Flush 排程執行時，**alias task queue 優先於 user task queue**：
@@ -118,6 +76,40 @@ Flush 排程執行時，**alias task queue 優先於 user task queue**：
 1. 先處理所有 alias 層級的操作（新增 / 刪除 alias entry）
 2. 再處理所有 user 層級的操作（MOD_ADD / MOD_DELETE uniqueMember）
 
-這樣可以確保 user modify 不會對一個還不存在（或已被刪除）的 alias entry 操作。
-
 詳見 [sync](./docs/sync.md)。
+
+---
+
+## Alias 刪除時的 Race Condition
+
+### 問題
+
+Alias task 先執行、user task 後執行，但如果中間某個 alias 被刪除，後續針對該 alias 的 user task 就會對不存在的 entry 操作（LDAP 回傳 no such object）。
+
+有兩個需要處理的視窗：
+
+1. **Flush 內部**：同一輪 flush 中，alias delete 執行完後，queue 裡還有針對該 alias 的 pending user task。
+2. **Enqueue 時**：Admin 提交 alias 刪除後（alias delete task 進 queue，但尚未 flush），user 仍可送出針對該 alias 的訂閱變更。
+
+### 解法
+
+**兩個機制合用：**
+
+#### 1. Flush 後清理（保證正確性）
+
+Worker 每次成功執行 alias delete 後，立即刪除同一 alias 的所有 pending user task：
+
+```python
+UserTaskQueue.objects.filter(alias_name=alias_name).delete()
+```
+
+這是正確性的保證。無論 user task 何時被 enqueue，只要 alias 被刪除，相關 task 就會被清掉。
+
+#### 2. Enqueue 前確認 alias 存在（Fail-fast 優化）
+
+User 送出訂閱變更時，API 層先確認 `alias` 仍存在於 DB，不存在就直接拒絕，不進 task queue。
+
+這不是正確性的必要條件（方法 1 已保證），但可以避免明顯無效的 task 進入 queue。
+
+> [!note]
+> 視窗 2（alias delete task pending、但 user task 已 enqueue）由方法 1 處理：下次 flush 執行 alias delete 時，會一併清除這些 user task。不需要 soft-delete 旗標。
