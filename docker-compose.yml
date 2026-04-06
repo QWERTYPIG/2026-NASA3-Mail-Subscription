@@ -4,9 +4,9 @@ services:
     image: postgres:15-alpine
     restart: always
     environment:
-      POSTGRES_DB: ${DB_NAME:-mail_sub_db}
-      POSTGRES_USER: ${DB_USER:-admin}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-secret}
+      POSTGRES_DB: ${DB_NAME:-Subscriptions}
+      POSTGRES_USER: ${DB_USER:-MailAdmin}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-password}
     ports:
       - "5432:5432"
     volumes:
@@ -34,9 +34,9 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - DB_NAME=${DB_NAME:-mail_sub_db}
-      - DB_USER=${DB_USER:-admin}
-      - DB_PASSWORD=${DB_PASSWORD:-secret}
+      - DB_NAME=${DB_NAME:-Subscriptions}
+      - DB_USER=${DB_USER:-MailAdmin}
+      - DB_PASSWORD=${DB_PASSWORD:-password}
       - DB_HOST=postgres
       - REDIS_QUEUE_URL=${REDIS_QUEUE_URL:-redis://redis:6379/0}
       - REDIS_CACHE_URL=${REDIS_CACHE_URL:-redis://redis:6379/1}
@@ -54,9 +54,9 @@ services:
     volumes:
       - .:/app
     environment:
-      - DB_NAME=${DB_NAME:-mail_sub_db}
-      - DB_USER=${DB_USER:-admin}
-      - DB_PASSWORD=${DB_PASSWORD:-secret}
+      - DB_NAME=${DB_NAME:-Subscriptions}
+      - DB_USER=${DB_USER:-MailAdmin}
+      - DB_PASSWORD=${DB_PASSWORD:-password}
       - DB_HOST=postgres
       - REDIS_QUEUE_URL=${REDIS_QUEUE_URL:-redis://redis:6379/0}
       - REDIS_CACHE_URL=${REDIS_CACHE_URL:-redis://redis:6379/1}

@@ -12,6 +12,8 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 
 from pathlib import Path
 import os # for reading environment variables
+import ldap # for using ldap
+from django_auth_ldap.config import LDAPSearch, PosixGroupType
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -149,3 +151,41 @@ STATIC_URL = 'static/'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# Security and Cookies
+# protect from xss
+SESSION_COOKIE_HTTPONLY = True
+#allow react to get CSRF token
+CSRF_COOKIE_HTTPONLY = False
+CSRF_COOKIE_SAMESITE = 'Lax'
+SESSION_COOKIE_SAMESITE = 'Lax'
+# Require HTTPS in production (Set to False ONLY during local development)
+SESSION_COOKIE_SECURE = False 
+CSRF_COOKIE_SECURE = False
+
+# Authentication
+AUTHENTICATION_BACKENDS = [
+    'django_auth_ldap.backend.LDAPBackend',
+    'django.contrib.auth.backends.ModelBackend',
+]
+# LDAP
+AUTH_LDAP_SERVER_URI = os.environ.get('LDAP_URI', 'ldap://172.16.127.109:389')
+# find user
+AUTH_LDAP_USER_SEARCH = LDAPSearch(
+    "ou=People,dc=csie,dc=ntu,dc=edu,dc=tw", 
+    ldap.SCOPE_SUBTREE, 
+    "(uid=%(user)s)"
+)
+# find group (mail gid is 62100)
+AUTH_LDAP_GROUP_SEARCH = LDAPSearch(
+    "ou=Group,dc=nasa,dc=csie,dc=ntu,dc=edu,dc=tw", 
+    ldap.SCOPE_SUBTREE, 
+    "(objectClass=posixGroup)"
+)
+AUTH_LDAP_GROUP_TYPE = PosixGroupType(name_attr="cn")
+# add admin flag
+AUTH_LDAP_USER_FLAGS_BY_GROUP = {
+    "is_staff": "cn=mailAdmin,ou=group,dc=csie,dc=ntu,dc=edu,dc=tw",
+}
+# updates ldap permissions to local database
+AUTH_LDAP_ALWAYS_UPDATE_USER = True
