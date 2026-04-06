@@ -35,14 +35,14 @@
 
 ---
 
-## Consistency Check 排程（每 5 分鐘，獨立排程）
+## Consistency Check（Flush 結束後執行）
+
+Flush 完成、`user_task_queue` 清空後，立即執行一次 consistency check。
 
 驗證 PostgreSQL `alias.user_id` 與 LDAP `ou=Aliases` 的實際內容是否一致。
 
-**執行前提：`user_task_queue` 為空。** 若 queue 中仍有 pending task，跳過本次 check，等下一輪。這樣可避免 consistency check 把「已寫入 DB、尚未 flush 至 LDAP」的訂閱狀態還原。
-
 ```
-① 確認 user_task_queue 為空，否則跳過
+① Flush 結束，user_task_queue 已清空
 ② 從 LDAP pull 所有 ou=Aliases 的 uniqueMember 列表
 ③ 與 PostgreSQL alias.user_id 逐一比對
 ④ 若有差異，以 LDAP 為準，更新 PostgreSQL
@@ -53,11 +53,18 @@
 
 ---
 
-## 兩個排程的關係
+## 兩個階段的關係
 
-| 排程 | 間隔 | 方向 | 目的 |
-|------|------|------|------|
-| Flush | 3 分鐘 | DB → LDAP | 把待處理的變更送出去 |
-| Consistency Check | 5 分鐘 | LDAP → DB | 確保 DB cache 是正確的 |
+Consistency Check 不是獨立排程，而是每次 Flush 的後半段：
 
-兩者獨立執行，不互相等待。
+```
+Flush（每 3 分鐘）
+  └─ 處理 alias_task_queue
+  └─ 處理 user_task_queue
+  └─ Consistency Check（queue 清空後立即執行）
+```
+
+| 階段 | 方向 | 目的 |
+|------|------|------|
+| Flush | DB → LDAP | 把待處理的變更送出去 |
+| Consistency Check | LDAP → DB | 確保 DB cache 與 LDAP 一致 |
