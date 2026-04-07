@@ -12,6 +12,7 @@
 
 - LDAP 是唯一的 source of truth，不得直接修改 LDAP——所有寫入都透過 task queue 由 Django-Q worker 非同步執行
 - `ou=Aliases` 的寫入者只有 Django-Q worker，Django API 不直接寫入
+- **禁止自行執行任何會更動 LDAP tree 的指令**（`ldapadd`、`ldapmodify`、`ldapdelete` 等）——應告知使用者正確的指令與步驟，由使用者自己執行
 
 ## Open Decisions
 

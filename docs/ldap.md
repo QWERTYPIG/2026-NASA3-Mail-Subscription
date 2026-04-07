@@ -4,6 +4,14 @@
 
 **LDAP URI：** `ldap://172.16.127.109:389`
 
+> [!note] LDAP 是外部伺服器
+> LDAP server 由系上 identity service 組維護，不在 docker-compose 管理範圍內。`ou=group` 的新增／修改（如 `cn=mailAdmin` 成員管理）需聯繫 identity service 組，或由有 LDAP admin 權限的人員直接操作。
+
+**Bind DN（mail 組使用帳號）：** `uid=mailtest,ou=people,dc=csie,dc=ntu,dc=edu,dc=tw`
+
+> [!note]
+> 這個帳號不是 LDAP admin（`cn=admin,...`），而是系上為 mail 組開立的服務帳號，擁有完整的 LDAP 操作權限，可直接執行 `ldapadd` / `ldapmodify` 等管理操作。
+
 ---
 
 ## Directory Structure
@@ -14,7 +22,7 @@ dc=csie,dc=ntu,dc=edu,dc=tw
 │   └── uid=<username> # objectClass: posixAccount, inetOrgPerson
 ├── ou=group           # read-only — 群組角色查詢
 │   ├── cn=student     # gidNumber: 450
-│   └── cn=mailAdmin   # Admin 判定依據（見下方）
+│   └── cn=mailAdmin   # Admin 判定依據（見下方），gidNumber: 62100
 └── ou=Aliases         # writable — 僅 Django-Q worker 可寫
     ├── cn=ws-user     # objectClass: groupOfUniqueNames
     └── cn=meow-user
@@ -43,7 +51,7 @@ dc=csie,dc=ntu,dc=edu,dc=tw
 ou=group
 └── cn=mailAdmin
     ├── objectClass: posixGroup
-    ├── gidNumber: <TBD>
+    ├── gidNumber: 62100
     └── memberUid: alice
         memberUid: bob
 ```
