@@ -8,6 +8,8 @@
 
 所有架構與技術決策文件在 `docs/`，從 [docs/architecture.md](./docs/architecture.md) 開始閱讀。
 
+`progress/` 資料夾為組員自由記錄個人進度用，除非使用者明確要求，否則不得主動讀取或參考其內容。
+
 ## Constraints
 
 - LDAP 是唯一的 source of truth，不得直接修改 LDAP——所有寫入都透過 task queue 由 Django-Q worker 非同步執行
