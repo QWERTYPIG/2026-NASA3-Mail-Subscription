@@ -43,7 +43,8 @@ INSTALLED_APPS = [
     # the ones below are added for this project
     'rest_framework',
     'django_q',
-    'apps.accounts', # for loading apps/accounts/apps.py
+    'apps.accounts.apps.AccountsConfig', # for loading apps/accounts/apps.py
+    'apps.subscriptions.apps.SubscriptionsConfig', # for loading apps/subscriptions/apps.py
 ]
 
 MIDDLEWARE = [
