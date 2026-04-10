@@ -44,6 +44,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'django_q',
     'apps.accounts', # for loading apps/accounts/apps.py
+    'apps.subscriptions', # for loading apps/subscriptions/apps.py
 ]
 
 MIDDLEWARE = [
