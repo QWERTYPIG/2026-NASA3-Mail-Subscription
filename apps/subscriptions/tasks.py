@@ -112,3 +112,27 @@ def flush_alias_tasks(conn: Connection) -> None:
                 task.alias_name,
                 exc,
             )
+
+def flush_user_tasks(conn: Connection) -> None:
+    """Process all rows in UserTaskQueue in id order."""
+    for task in UserTaskQueue.objects.all():
+        dn = _alias_dn(task.alias_name)
+        member = _member_dn(task.user_uid)
+        try:
+            if task.action == "add":
+                _with_retry(conn.modify, dn, {"uniqueMember": [(MODIFY_ADD, [member])]})
+            elif task.action == "remove":
+                _with_retry(
+                    conn.modify, dn, {"uniqueMember": [(MODIFY_DELETE, [member])]}
+                )
+
+            task.delete()
+
+        except LDAPException as exc:
+            logger.error(
+                "flush_user_tasks: gave up on %s %s @ %s — %s",
+                task.action,
+                task.user_uid,
+                task.alias_name,
+                exc,
+            )
