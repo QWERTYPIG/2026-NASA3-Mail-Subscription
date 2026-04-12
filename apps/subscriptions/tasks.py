@@ -136,3 +136,64 @@ def flush_user_tasks(conn: Connection) -> None:
                 task.alias_name,
                 exc,
             )
+
+def run_consistency_check(conn: Connection) -> None:
+    """Pull ou=Aliases from LDAP and sync into the Alias cache (DB).
+
+    LDAP is the source of truth; DB is always updated to match LDAP.
+    """
+    conn.search(
+        ALIASES_DN,
+        "(objectClass=groupOfUniqueNames)",
+        search_scope=LEVEL,
+        attributes=["cn", "uniqueMember"],
+    )
+
+    for entry in conn.entries:
+        alias_name = entry.cn.value
+        raw_members = entry.uniqueMember.values if entry.uniqueMember else []
+
+        user_ids = []
+        for member_dn in raw_members:
+            # Full DN format: uid=<uid>,ou=people,...
+            # Skip the placeholder bind DN used when an alias has no real members.
+            if member_dn == LDAP_BIND_DN:
+                continue
+            if member_dn.startswith("uid="):
+                uid = member_dn.split(",")[0][len("uid=") :]
+                user_ids.append(uid)
+
+        Alias.objects.filter(alias_name=alias_name).update(user_id=user_ids)
+
+
+# ---------------------------------------------------------------------------
+# Entry point registered with Django-Q Schedule
+# ---------------------------------------------------------------------------
+
+FLUSH_LOCK_KEY = "flush_ldap_tasks_lock"
+FLUSH_LOCK_TTL = 300  # seconds — must exceed worst-case flush duration
+
+
+def flush_ldap_tasks() -> None:
+    """Main scheduled task: flush task queues then run consistency check.
+
+    A Redis lock prevents overlapping runs when the previous flush takes
+    longer than the 3-minute schedule interval.
+    """
+    acquired = cache.add(FLUSH_LOCK_KEY, "1", FLUSH_LOCK_TTL)
+    if not acquired:
+        logger.info("flush_ldap_tasks: previous flush still running, skipping")
+        return
+
+    try:
+        conn = _connect()
+        try:
+            flush_alias_tasks(conn)
+            flush_user_tasks(conn)
+            run_consistency_check(conn)
+        finally:
+            conn.unbind()
+    except Exception:
+        logger.exception("flush_ldap_tasks: unexpected error")
+    finally:
+        cache.delete(FLUSH_LOCK_KEY)
