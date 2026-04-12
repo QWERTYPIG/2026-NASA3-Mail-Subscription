@@ -86,3 +86,25 @@ class FlushAliasTasksTest(TestCase):
             flush_alias_tasks(conn)
         # Task 應該留在 queue 等下次重試
         self.assertEqual(AliasTaskQueue.objects.count(), 1)
+
+
+class ConsistencyCheckTest(TestCase):
+    def test_updates_alias_user_ids_from_ldap(self):
+        Alias.objects.create(alias_name="faculty", user_id=[])
+
+        # 模擬 LDAP entry 格式
+        entry = MagicMock()
+        entry.cn.value = "faculty"
+        entry.uniqueMember.values = [
+            "uid=b12902000,ou=people,dc=csie,dc=ntu,dc=edu,dc=tw",
+            "uid=mailtest,ou=people,dc=csie,dc=ntu,dc=edu,dc=tw",  # bind DN（placeholder）
+        ]
+
+        conn = MagicMock()
+        conn.entries = [entry]
+
+        run_consistency_check(conn)
+
+        alias = Alias.objects.get(alias_name="faculty")
+        # bind DN 應被過濾掉
+        self.assertEqual(alias.user_id, ["b12902000"])
