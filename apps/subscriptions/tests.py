@@ -108,3 +108,21 @@ class ConsistencyCheckTest(TestCase):
         alias = Alias.objects.get(alias_name="faculty")
         # bind DN 應被過濾掉
         self.assertEqual(alias.user_id, ["b12902000"])
+
+class FlushLdapTasksTest(TestCase):
+    @patch("apps.subscriptions.tasks._connect")
+    @patch("apps.subscriptions.tasks.cache")
+    def test_skips_if_lock_not_acquired(self, mock_cache, mock_connect):
+        mock_cache.add.return_value = False  # 模擬 lock 已被佔用
+        from .tasks import flush_ldap_tasks
+        flush_ldap_tasks()
+        mock_connect.assert_not_called()
+
+    @patch("apps.subscriptions.tasks._connect")
+    @patch("apps.subscriptions.tasks.cache")
+    def test_releases_lock_on_success(self, mock_cache, mock_connect):
+        mock_cache.add.return_value = True
+        mock_connect.return_value = MagicMock()
+        from .tasks import flush_ldap_tasks
+        flush_ldap_tasks()
+        mock_cache.delete.assert_called_once()
