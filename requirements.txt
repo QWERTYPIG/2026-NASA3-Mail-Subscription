@@ -4,5 +4,6 @@ psycopg2-binary
 redis
 django-q2  # The actively maintained fork of django-q
 django-auth-ldap
+ldap3
 python-dotenv
 django-cors-headers

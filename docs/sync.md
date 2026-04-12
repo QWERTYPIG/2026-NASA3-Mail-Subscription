@@ -13,7 +13,9 @@
 ```
 ① 取出所有 alias_task_queue 的 tasks
 ② 依序執行 alias entry 的新增 / 刪除
-   └─ 每次 alias delete 完成後，刪除 user_task_queue 中針對該 alias 的所有 tasks
+   └─ add：建立 groupOfUniqueNames entry，以 bind DN 作為 uniqueMember 佔位符
+          （確保 groupOfUniqueNames 至少有一個 member；consistency check 會在之後修正）
+   └─ delete：刪除 alias entry，並同步清除 user_task_queue 中針對該 alias 的所有 tasks
 ③ 取出所有 user_task_queue 的 tasks
 ④ 依序執行 uniqueMember 的 MOD_ADD / MOD_DELETE
 ```
@@ -25,13 +27,24 @@
 每個 LDAP 操作採用 exponential backoff：
 
 ```
-嘗試間隔：0.5 → 1 → 2 → 4 → 8 秒
-超過後放棄，task.status = 'failed'
+嘗試間隔：0.5 → 1 → 2 → 4 → 8 秒，共 6 次嘗試
+超過後放棄，task row 留在 queue 不刪除
 ```
 
 ### Failed Task 處理
 
-`failed` task 會在**下一次 flush 排程時排在第一個**優先處理，不會被遺棄。
+全部 retry 耗盡後，task row **保留在 queue**（不刪除）。由於 `alias_task_queue` 與 `user_task_queue` 都以 `id` 排序（`ordering = ['id']`），失敗的 task 在下一次 flush 時仍會排在最前面優先處理。
+
+### Redis Lock（防止重疊執行）
+
+`flush_ldap_tasks()` 使用 Redis lock 防止前一次 flush 尚未結束時下一次排程重複執行：
+
+```
+FLUSH_LOCK_KEY = "flush_ldap_tasks_lock"
+FLUSH_LOCK_TTL = 300 秒
+```
+
+若 lock 已被佔用，本次排程直接 return，不執行任何 LDAP 操作。無論執行成功或失敗，`finally` 區塊保證 lock 一定被釋放。
 
 ---
 
