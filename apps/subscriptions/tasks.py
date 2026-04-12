@@ -94,7 +94,7 @@ def flush_alias_tasks(conn: Connection) -> None:
                         "cn": task.alias_name,
                         "uniqueMember": [LDAP_BIND_DN],
                     },
-
+                )
 
             elif task.action == "remove":
                 _with_retry(conn.delete, dn)
