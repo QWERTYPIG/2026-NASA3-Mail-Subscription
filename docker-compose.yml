@@ -41,6 +41,8 @@ services:
       - REDIS_QUEUE_URL=${REDIS_QUEUE_URL:-redis://redis:6379/0}
       - REDIS_CACHE_URL=${REDIS_CACHE_URL:-redis://redis:6379/1}
       - LDAP_URI=${LDAP_URI:-ldap://localhost:389}
+      - LDAP_BIND_DN=${LDAP_BIND_DN:-uid=mailtest,ou=people,dc=csie,dc=ntu,dc=edu,dc=tw}
+      - LDAP_BIND_PASSWORD=${LDAP_BIND_PASSWORD:-}
     depends_on:
       - postgres
       - redis
@@ -61,6 +63,8 @@ services:
       - REDIS_QUEUE_URL=${REDIS_QUEUE_URL:-redis://redis:6379/0}
       - REDIS_CACHE_URL=${REDIS_CACHE_URL:-redis://redis:6379/1}
       - LDAP_URI=${LDAP_URI:-ldap://localhost:389}
+      - LDAP_BIND_DN=${LDAP_BIND_DN:-uid=mailtest,ou=people,dc=csie,dc=ntu,dc=edu,dc=tw}
+      - LDAP_BIND_PASSWORD=${LDAP_BIND_PASSWORD:-}
     depends_on:
       - postgres
       - redis
