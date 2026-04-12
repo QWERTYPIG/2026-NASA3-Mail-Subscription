@@ -1,0 +1,15 @@
+[project]
+name = "2026-nasa3-mail-subscription"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.12"
+dependencies = [
+    "django>=4.2",
+    "django-auth-ldap>=5.3.0",
+    "django-cors-headers>=4.9.0",
+    "django-q2>=1.9.0",
+    "djangorestframework>=3.17.1",
+    "psycopg2-binary>=2.9.11",
+    "python-dotenv>=1.2.2",
+    "redis>=7.4.0",
+]
