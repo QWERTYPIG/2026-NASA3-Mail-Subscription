@@ -7,6 +7,7 @@ from ldap3.core.exceptions import LDAPException
 from rest_framework.test import APIClient
 
 from .models import Alias, AliasTaskQueue, UserTaskQueue
+from .serializers import UserSubscriptionUpdateSerializer
 from .tasks import flush_alias_tasks, flush_user_tasks, run_consistency_check
 
 
@@ -191,3 +192,45 @@ class AliasListApiTest(TestCase):
 
         self.assertTrue(activities_item["is_subscribed"])
         self.assertFalse(workstation_item["is_subscribed"])
+
+
+class UserSubscriptionUpdateSerializerTest(TestCase):
+    def setUp(self):
+        Alias.objects.create(alias_name="activities", display_name="Activities")
+        Alias.objects.create(alias_name="workstation", display_name="Workstation")
+
+    def test_accepts_full_alias_state_map(self):
+        payload = {
+            "activities": True,
+            "workstation": False,
+        }
+        serializer = UserSubscriptionUpdateSerializer(data=payload)
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        self.assertEqual(serializer.validated_data, payload)
+
+    def test_rejects_missing_aliases(self):
+        payload = {
+            "activities": True,
+        }
+        serializer = UserSubscriptionUpdateSerializer(data=payload)
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("Payload must include all aliases", str(serializer.errors))
+
+    def test_rejects_non_boolean_value(self):
+        payload = {
+            "activities": "yes",
+            "workstation": False,
+        }
+        serializer = UserSubscriptionUpdateSerializer(data=payload)
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("must be a boolean", str(serializer.errors))
+
+    def test_rejects_unknown_alias_key(self):
+        payload = {
+            "activities": True,
+            "workstation": False,
+            "not-exist-alias": True,
+        }
+        serializer = UserSubscriptionUpdateSerializer(data=payload)
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("unknown aliases", str(serializer.errors))

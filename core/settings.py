@@ -100,6 +100,13 @@ CACHES = {
     }
 }
 
+REST_FRAMEWORK = {
+    "DEFAULT_THROTTLE_RATES": {
+        # Assume 1 update request per user per 10 minutes
+        "user_subscription_cooldown": "1/10m",
+    },
+}
+
 #Django-Q configuration
 Q_CLUSTER = {
     'name': 'mail_tasks',
