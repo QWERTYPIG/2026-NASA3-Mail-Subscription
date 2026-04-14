@@ -1,5 +1,6 @@
 from unittest.mock import MagicMock, call, patch
 
+from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.test import TestCase
 from django.contrib.auth import get_user_model
@@ -234,3 +235,80 @@ class UserSubscriptionUpdateSerializerTest(TestCase):
         serializer = UserSubscriptionUpdateSerializer(data=payload)
         self.assertFalse(serializer.is_valid())
         self.assertIn("unknown aliases", str(serializer.errors))
+
+
+class UserSubscriptionUpdateApiTest(TestCase):
+    def setUp(self):
+        cache.clear()
+        self.client = APIClient()
+        self.user_model = get_user_model()
+
+        self.user = self.user_model.objects.create_user(
+            username="user-put",
+            password="pass",
+            is_staff=False,
+        )
+
+        Alias.objects.create(
+            alias_name="activities",
+            display_name="Activities",
+            user_id=[],
+        )
+        Alias.objects.create(
+            alias_name="workstation",
+            display_name="Workstation",
+            user_id=["user-put"],
+        )
+
+    def test_put_requires_auth(self):
+        payload = {
+            "activities": True,
+            "workstation": False,
+        }
+        resp = self.client.put("/api/v1/user/subscriptions/", payload, format="json")
+        self.assertEqual(resp.status_code, 403)
+
+    def test_put_updates_alias_cache_and_creates_user_tasks(self):
+        self.client.force_authenticate(user=self.user)
+        payload = {
+            "activities": True,
+            "workstation": False,
+        }
+
+        resp = self.client.put("/api/v1/user/subscriptions/", payload, format="json")
+        self.assertEqual(resp.status_code, 202)
+
+        tasks = UserTaskQueue.objects.all().order_by("alias_name")
+        self.assertEqual(tasks.count(), 2)
+        self.assertEqual(tasks[0].alias_name, "activities")
+        self.assertEqual(tasks[0].action, "add")
+        self.assertEqual(tasks[0].user_uid, "user-put")
+        self.assertEqual(tasks[1].alias_name, "workstation")
+        self.assertEqual(tasks[1].action, "remove")
+        self.assertEqual(tasks[1].user_uid, "user-put")
+
+        activities = Alias.objects.get(alias_name="activities")
+        workstation = Alias.objects.get(alias_name="workstation")
+        self.assertIn("user-put", activities.user_id)
+        self.assertNotIn("user-put", workstation.user_id)
+
+    def test_put_rejects_invalid_payload(self):
+        self.client.force_authenticate(user=self.user)
+        payload = {
+            "activities": True,
+        }
+        resp = self.client.put("/api/v1/user/subscriptions/", payload, format="json")
+        self.assertEqual(resp.status_code, 400)
+
+    def test_put_is_throttled_on_second_request(self):
+        self.client.force_authenticate(user=self.user)
+        payload = {
+            "activities": True,
+            "workstation": False,
+        }
+
+        first = self.client.put("/api/v1/user/subscriptions/", payload, format="json")
+        second = self.client.put("/api/v1/user/subscriptions/", payload, format="json")
+
+        self.assertEqual(first.status_code, 202)
+        self.assertEqual(second.status_code, 429)
