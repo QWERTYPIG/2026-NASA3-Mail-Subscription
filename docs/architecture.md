@@ -67,3 +67,4 @@
 | [sync](./docs/sync.md) | Background worker、flush 排程、retry 機制 |
 | [api](./docs/api.md) | API endpoints、request / response 格式 |
 | [open-decisions](./docs/open-decisions.md) | 尚未決定的技術細節 |
+| [testing](./docs/testing.md) | 自動化測試 |
