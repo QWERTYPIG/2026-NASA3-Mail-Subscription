@@ -2,7 +2,9 @@ from unittest.mock import MagicMock, call, patch
 
 from django.core.exceptions import ValidationError
 from django.test import TestCase
+from django.contrib.auth import get_user_model
 from ldap3.core.exceptions import LDAPException
+from rest_framework.test import APIClient
 
 from .models import Alias, AliasTaskQueue, UserTaskQueue
 from .tasks import flush_alias_tasks, flush_user_tasks, run_consistency_check
@@ -126,3 +128,66 @@ class FlushLdapTasksTest(TestCase):
         from .tasks import flush_ldap_tasks
         flush_ldap_tasks()
         mock_cache.delete.assert_called_once()
+
+
+class AliasListApiTest(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.user_model = get_user_model()
+
+        self.normal_user = self.user_model.objects.create_user(
+            username="user1",
+            password="pass",
+            is_staff=False,
+        )
+        self.admin_user = self.user_model.objects.create_user(
+            username="admin1",
+            password="pass",
+            is_staff=True,
+        )
+
+        Alias.objects.create(
+            alias_name="activities",
+            display_name="Activities",
+            description="Dept events",
+            user_id=["user1"],
+        )
+        Alias.objects.create(
+            alias_name="workstation",
+            display_name="Workstation",
+            description="Lab announcements",
+            user_id=[],
+        )
+
+    def test_admin_aliases_requires_admin_permission(self):
+        self.client.force_authenticate(user=self.normal_user)
+        resp = self.client.get("/api/v1/admin/aliases/")
+        self.assertEqual(resp.status_code, 403)
+
+    def test_admin_aliases_requires_auth(self):
+        resp = self.client.get("/api/v1/admin/aliases/")
+        self.assertEqual(resp.status_code, 403)
+
+    def test_admin_aliases_returns_alias_list(self):
+        self.client.force_authenticate(user=self.admin_user)
+        resp = self.client.get("/api/v1/admin/aliases/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.data), 2)
+        self.assertIn("alias_name", resp.data[0])
+        self.assertNotIn("is_subscribed", resp.data[0])
+
+    def test_user_subscriptions_requires_auth(self):
+        resp = self.client.get("/api/v1/user/subscriptions/")
+        self.assertEqual(resp.status_code, 403)
+
+    def test_user_subscriptions_includes_is_subscribed(self):
+        self.client.force_authenticate(user=self.normal_user)
+        resp = self.client.get("/api/v1/user/subscriptions/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.data), 2)
+
+        activities_item = next(item for item in resp.data if item["alias_name"] == "activities")
+        workstation_item = next(item for item in resp.data if item["alias_name"] == "workstation")
+
+        self.assertTrue(activities_item["is_subscribed"])
+        self.assertFalse(workstation_item["is_subscribed"])
