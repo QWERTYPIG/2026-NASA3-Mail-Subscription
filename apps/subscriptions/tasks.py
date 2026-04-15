@@ -163,7 +163,10 @@ def run_consistency_check(conn: Connection) -> None:
                 uid = member_dn.split(",")[0][len("uid=") :]
                 user_ids.append(uid)
 
-        Alias.objects.filter(alias_name=alias_name).update(user_id=user_ids)
+        Alias.objects.update_or_create(
+            alias_name=alias_name,
+            defaults={"user_id": user_ids},
+        )
 
 
 # ---------------------------------------------------------------------------
