@@ -4,7 +4,7 @@ import time
 
 from django.core.cache import cache
 from ldap3 import LEVEL, MODIFY_ADD, MODIFY_DELETE, Connection, Server
-from ldap3.core.exceptions import LDAPException
+from ldap3.core.exceptions import LDAPEntryAlreadyExistsResult, LDAPException
 
 from .models import Alias, AliasTaskQueue, UserTaskQueue
 
@@ -86,15 +86,23 @@ def flush_alias_tasks(conn: Connection) -> None:
                 # groupOfUniqueNames requires at least one uniqueMember.
                 # Use the bind DN as a placeholder; consistency check will
                 # correct the member list after the first real subscription.
-                _with_retry(
-                    conn.add,
-                    dn,
-                    object_class=["groupOfUniqueNames"],
-                    attributes={
-                        "cn": task.alias_name,
-                        "uniqueMember": [LDAP_BIND_DN],
-                    },
-                )
+                try:
+                    _with_retry(
+                        conn.add,
+                        dn,
+                        object_class=["groupOfUniqueNames"],
+                        attributes={
+                            "cn": task.alias_name,
+                            "uniqueMember": [LDAP_BIND_DN],
+                        },
+                    )
+                except LDAPEntryAlreadyExistsResult:
+                    # Entry already exists in LDAP — desired state reached,
+                    # no retry needed.
+                    logger.info(
+                        "flush_alias_tasks: %s already exists in LDAP, skipping add",
+                        task.alias_name,
+                    )
 
             elif task.action == "remove":
                 _with_retry(conn.delete, dn)
