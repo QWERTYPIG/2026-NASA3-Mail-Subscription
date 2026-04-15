@@ -57,11 +57,9 @@ X-CSRFToken: <csrftoken cookie 的值>
 
 ---
 
-## Subscriptions — `/api/v1/subscriptions/`
+## Subscriptions — `/api/v1/user/subscriptions/`
 
-> [!todo] 以下 endpoints 尚未實作，schema 待確認 目前只有 auth 部分完成。
-
-### `GET /api/v1/subscriptions/`
+### `GET /api/v1/user/subscriptions/`
 
 取得所有 alias 的資訊。
 
@@ -84,13 +82,7 @@ X-CSRFToken: <csrftoken cookie 的值>
 ]
 ```
 
-**Admin** — 回傳 alias 列表，無需 `is_subscribed` 欄位（admin 不訂閱，只管理成員）。
-
-> [!todo] Admin response schema 待後端確認 是回傳不含 `is_subscribed` 的同一結構，還是完全不同的 endpoint？
-
----
-
-### `POST /api/v1/subscriptions/update/`
+### `PUT /api/v1/user/subscriptions/`
 
 更新訂閱狀態。冷卻時間 10 分鐘，冷卻中回傳 `429`。
 
@@ -120,3 +112,27 @@ X-CSRFToken: <csrftoken cookie 的值>
 ```json
 { "detail": "請等待 X 秒後再試" }
 ```
+
+---
+
+## Aliases - `/api/v1/admin/aliases`
+
+### `GET /api/v1/admin/aliases/`
+
+**Admin** — 回傳 alias 列表，無需 `is_subscribed` 欄位（admin 不訂閱，只管理成員）。
+
+```json
+[
+  {
+    "alias_name": "workstation",
+    "display_name": "工作站",
+    "description": "工作站清理、重開機公告",
+  },
+  {
+    "alias_name": "activities",
+    "display_name": "系上活動",
+    "description": "演講、交流",
+  }
+]
+```
+
