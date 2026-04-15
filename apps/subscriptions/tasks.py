@@ -53,7 +53,7 @@ def _with_retry(fn, *args, **kwargs):
 
 
 def _connect() -> Connection:
-    server = Server(LDAP_URI)
+    server = Server(LDAP_URI, connect_timeout=10)
     conn = Connection(
         server,
         user=LDAP_BIND_DN,
