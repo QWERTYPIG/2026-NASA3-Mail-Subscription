@@ -180,15 +180,17 @@ AUTHENTICATION_BACKENDS = [
 ]
 # LDAP
 AUTH_LDAP_SERVER_URI = os.environ.get('LDAP_URI', 'ldap://172.16.127.109:389')
+AUTH_LDAP_BIND_DN = os.environ.get('LDAP_BIND_DN', '')
+AUTH_LDAP_BIND_PASSWORD = os.environ.get('LDAP_BIND_PASSWORD', '')
 # find user
 AUTH_LDAP_USER_SEARCH = LDAPSearch(
-    "ou=People,dc=csie,dc=ntu,dc=edu,dc=tw", 
+    "ou=people,dc=csie,dc=ntu,dc=edu,dc=tw", 
     ldap.SCOPE_SUBTREE, 
     "(uid=%(user)s)"
 )
 # find group (mail gid is 62100)
 AUTH_LDAP_GROUP_SEARCH = LDAPSearch(
-    "ou=Group,dc=nasa,dc=csie,dc=ntu,dc=edu,dc=tw", 
+    "ou=group,dc=nasa,dc=csie,dc=ntu,dc=edu,dc=tw", 
     ldap.SCOPE_SUBTREE, 
     "(objectClass=posixGroup)"
 )
