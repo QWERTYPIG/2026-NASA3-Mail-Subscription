@@ -10,9 +10,10 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
+import os  # for reading environment variables
 from pathlib import Path
-import os # for reading environment variables
-import ldap # for using ldap
+
+import ldap  # for using ldap
 from django_auth_ldap.config import LDAPSearch, PosixGroupType
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -23,7 +24,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-8i2(a*=k50*w8gs4r*!j%_om-8(-qcgif8f&yhu=ql5f5!0nnn'
+SECRET_KEY = "django-insecure-8i2(a*=k50*w8gs4r*!j%_om-8(-qcgif8f&yhu=ql5f5!0nnn"
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
@@ -34,48 +35,48 @@ ALLOWED_HOSTS = []
 # Application definition
 
 INSTALLED_APPS = [
-    'django.contrib.admin',
-    'django.contrib.auth',
-    'django.contrib.contenttypes',
-    'django.contrib.sessions',
-    'django.contrib.messages',
-    'django.contrib.staticfiles',
-    'django.contrib.postgres',
+    "django.contrib.admin",
+    "django.contrib.auth",
+    "django.contrib.contenttypes",
+    "django.contrib.sessions",
+    "django.contrib.messages",
+    "django.contrib.staticfiles",
+    "django.contrib.postgres",
     # the ones below are added for this project
-    'rest_framework',
-    'django_q',
-    'apps.accounts.apps.AccountsConfig', # for loading apps/accounts/apps.py
-    'apps.subscriptions.apps.SubscriptionsConfig', # for loading apps/subscriptions/apps.py
+    "rest_framework",
+    "django_q",
+    "apps.accounts.apps.AccountsConfig",  # for loading apps/accounts/apps.py
+    "apps.subscriptions.apps.SubscriptionsConfig",  # for loading apps/subscriptions/apps.py
 ]
 
 MIDDLEWARE = [
-    'django.middleware.security.SecurityMiddleware',
-    'django.contrib.sessions.middleware.SessionMiddleware',
-    'django.middleware.common.CommonMiddleware',
-    'django.middleware.csrf.CsrfViewMiddleware',
-    'django.contrib.auth.middleware.AuthenticationMiddleware',
-    'django.contrib.messages.middleware.MessageMiddleware',
-    'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    "django.middleware.security.SecurityMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
+    "django.middleware.common.CommonMiddleware",
+    "django.middleware.csrf.CsrfViewMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "django.contrib.messages.middleware.MessageMiddleware",
+    "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
-ROOT_URLCONF = 'core.urls'
+ROOT_URLCONF = "core.urls"
 
 TEMPLATES = [
     {
-        'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
-        'APP_DIRS': True,
-        'OPTIONS': {
-            'context_processors': [
-                'django.template.context_processors.request',
-                'django.contrib.auth.context_processors.auth',
-                'django.contrib.messages.context_processors.messages',
+        "BACKEND": "django.template.backends.django.DjangoTemplates",
+        "DIRS": [],
+        "APP_DIRS": True,
+        "OPTIONS": {
+            "context_processors": [
+                "django.template.context_processors.request",
+                "django.contrib.auth.context_processors.auth",
+                "django.contrib.messages.context_processors.messages",
             ],
         },
     },
 ]
 
-WSGI_APPLICATION = 'core.wsgi.application'
+WSGI_APPLICATION = "core.wsgi.application"
 
 
 # Database
@@ -83,13 +84,13 @@ WSGI_APPLICATION = 'core.wsgi.application'
 
 DATABASES = {
     # set postgresql as default database
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.environ.get('DB_NAME', 'mail_sub_db'),
-        'USER': os.environ.get('DB_USER', 'admin'),
-        'PASSWORD': os.environ.get('DB_PASSWORD', 'secret'),
-        'HOST': os.environ.get('DB_HOST', 'postgres'),
-        'PORT': '5432',
+    "default": {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": os.environ.get("DB_NAME", "mail_sub_db"),
+        "USER": os.environ.get("DB_USER", "admin"),
+        "PASSWORD": os.environ.get("DB_PASSWORD", "secret"),
+        "HOST": os.environ.get("DB_HOST", "postgres"),
+        "PORT": "5432",
     }
 }
 
@@ -107,18 +108,18 @@ REST_FRAMEWORK = {
     },
 }
 
-#Django-Q configuration
+# Django-Q configuration
 Q_CLUSTER = {
-    'name': 'mail_tasks',
-    'workers': 4,
-    'recycle': 500,
-    'timeout': 60,
-    'compress': True,
-    'save_limit': 250,
-    'queue_limit': 500,
-    'cpu_affinity': 1,
-    'label': 'Django Q',
-    'redis': os.environ.get('REDIS_QUEUE_URL', 'redis://redis:6379/0')
+    "name": "mail_tasks",
+    "workers": 4,
+    "recycle": 500,
+    "timeout": 60,
+    "compress": True,
+    "save_limit": 250,
+    "queue_limit": 500,
+    "cpu_affinity": 1,
+    "label": "Django Q",
+    "redis": os.environ.get("REDIS_QUEUE_URL", "redis://redis:6379/0"),
 }
 
 # Password validation
@@ -126,16 +127,16 @@ Q_CLUSTER = {
 
 AUTH_PASSWORD_VALIDATORS = [
     {
-        'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
+        "NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator",
     },
     {
-        'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
+        "NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",
     },
     {
-        'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
+        "NAME": "django.contrib.auth.password_validation.CommonPasswordValidator",
     },
     {
-        'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
+        "NAME": "django.contrib.auth.password_validation.NumericPasswordValidator",
     },
 ]
 
@@ -143,9 +144,9 @@ AUTH_PASSWORD_VALIDATORS = [
 # Internationalization
 # https://docs.djangoproject.com/en/5.2/topics/i18n/
 
-LANGUAGE_CODE = 'en-us'
+LANGUAGE_CODE = "en-us"
 
-TIME_ZONE = 'UTC'
+TIME_ZONE = "UTC"
 
 USE_I18N = True
 
@@ -155,42 +156,42 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
-STATIC_URL = 'static/'
+STATIC_URL = "static/"
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
-DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # Security and Cookies
 # protect from xss
 SESSION_COOKIE_HTTPONLY = True
-#allow react to get CSRF token
+# allow react to get CSRF token
 CSRF_COOKIE_HTTPONLY = False
-CSRF_COOKIE_SAMESITE = 'Lax'
-SESSION_COOKIE_SAMESITE = 'Lax'
+CSRF_COOKIE_SAMESITE = "Lax"
+SESSION_COOKIE_SAMESITE = "Lax"
 # Require HTTPS in production (Set to False ONLY during local development)
-SESSION_COOKIE_SECURE = False 
+SESSION_COOKIE_SECURE = False
 CSRF_COOKIE_SECURE = False
 
 # Authentication
 AUTHENTICATION_BACKENDS = [
-    'django_auth_ldap.backend.LDAPBackend',
-    'django.contrib.auth.backends.ModelBackend',
+    "django_auth_ldap.backend.LDAPBackend",
+    "django.contrib.auth.backends.ModelBackend",
 ]
 # LDAP
-AUTH_LDAP_SERVER_URI = os.environ.get('LDAP_URI', 'ldap://172.16.127.109:389')
+AUTH_LDAP_SERVER_URI = os.environ.get("LDAP_URI", "ldap://172.16.127.109:389")
+AUTH_LDAP_BIND_DN = os.environ.get("LDAP_BIND_DN", "")
+AUTH_LDAP_BIND_PASSWORD = os.environ.get("LDAP_BIND_PASSWORD", "")
 # find user
 AUTH_LDAP_USER_SEARCH = LDAPSearch(
-    "ou=People,dc=csie,dc=ntu,dc=edu,dc=tw", 
-    ldap.SCOPE_SUBTREE, 
-    "(uid=%(user)s)"
+    "ou=people,dc=csie,dc=ntu,dc=edu,dc=tw", ldap.SCOPE_SUBTREE, "(uid=%(user)s)"
 )
 # find group (mail gid is 62100)
 AUTH_LDAP_GROUP_SEARCH = LDAPSearch(
-    "ou=Group,dc=nasa,dc=csie,dc=ntu,dc=edu,dc=tw", 
-    ldap.SCOPE_SUBTREE, 
-    "(objectClass=posixGroup)"
+    "ou=group,dc=csie,dc=ntu,dc=edu,dc=tw",
+    ldap.SCOPE_SUBTREE,
+    "(objectClass=posixGroup)",
 )
 AUTH_LDAP_GROUP_TYPE = PosixGroupType(name_attr="cn")
 # add admin flag
