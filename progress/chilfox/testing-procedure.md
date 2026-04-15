@@ -215,10 +215,11 @@ print('Pending tasks:', list(UserTaskQueue.objects.values()))
 ```bash
 curl -s -c admin_cookies.txt -X POST http://localhost:8000/api/v1/auth/login/ \
   -H "Content-Type: application/json" \
-  -d '{"username": "<admin帳號>", "password": "<密碼>"}' | python3 -m json.tool
+  -d '{"username": "admin uid", "password": "password"}' | python3 -m json.tool
 
 curl -s -b admin_cookies.txt http://localhost:8000/api/v1/admin/aliases/ | python3 -m json.tool
 ```
+> 目前只有 mailtest 有 mailAdmin group
 
 **預期 200**：列表不含 `is_subscribed` 欄位。
 
