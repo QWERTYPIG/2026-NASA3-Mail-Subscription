@@ -28,6 +28,7 @@ services:
   # 3. The API Gateway (Web Server)
   web:
     build: .
+    restart: always
     command: python manage.py runserver 0.0.0.0:8000
     volumes:
       - .:/app
@@ -52,6 +53,7 @@ services:
   # 4. The Background Worker (Django-Q)
   worker:
     build: .
+    restart: always
     command: python manage.py qcluster
     volumes:
       - .:/app
