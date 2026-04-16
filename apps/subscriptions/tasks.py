@@ -54,21 +54,30 @@ def _with_retry(fn, *args, **kwargs):
 # ---------------------------------------------------------------------------
 
 
+ALERT_RECIPIENTS = [
+    "chilfox@csie.ntu.edu.tw",
+    "qwertypig@csie.ntu.edu.tw",
+    "bbwinner@csie.ntu.edu.tw",
+]
+
+
 def _connect() -> Connection:
     server = Server(LDAP_URI, connect_timeout=10)
-    if not server:
-        send_alert_email(
-            recipients=["chilfox@csie.ntu.edu.tw", "qwertypig@csie.ntu.edu.tw", "bbwinner@csie.ntu.edu.tw"],
-            subject="LDAP Connection Failure",
-            body=f"Failed to initialize LDAP server object for URI: {LDAP_URI}",
+    try:
+        conn = Connection(
+            server,
+            user=LDAP_BIND_DN,
+            password=LDAP_BIND_PASSWORD,
+            auto_bind=True,
+            raise_exceptions=True,
         )
-    conn = Connection(
-        server,
-        user=LDAP_BIND_DN,
-        password=LDAP_BIND_PASSWORD,
-        auto_bind=True,
-        raise_exceptions=True,
-    )
+    except LDAPException as exc:
+        send_alert_email(
+            recipients=ALERT_RECIPIENTS,
+            subject="LDAP Connection Failure",
+            body=f"Failed to connect to LDAP server at {LDAP_URI}.\n\nError: {exc}",
+        )
+        raise
     return conn
 
 
