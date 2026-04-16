@@ -6,6 +6,8 @@ from django.core.cache import cache
 from ldap3 import LEVEL, MODIFY_ADD, MODIFY_DELETE, Connection, Server
 from ldap3.core.exceptions import LDAPEntryAlreadyExistsResult, LDAPException
 
+from core.mail import send_alert_email
+
 from .models import Alias, AliasTaskQueue, UserTaskQueue
 
 logger = logging.getLogger(__name__)
@@ -52,15 +54,30 @@ def _with_retry(fn, *args, **kwargs):
 # ---------------------------------------------------------------------------
 
 
+ALERT_RECIPIENTS = [
+    "chilfox@csie.ntu.edu.tw",
+    "qwertypig@csie.ntu.edu.tw",
+    "bbwinner@csie.ntu.edu.tw",
+]
+
+
 def _connect() -> Connection:
     server = Server(LDAP_URI, connect_timeout=10)
-    conn = Connection(
-        server,
-        user=LDAP_BIND_DN,
-        password=LDAP_BIND_PASSWORD,
-        auto_bind=True,
-        raise_exceptions=True,
-    )
+    try:
+        conn = Connection(
+            server,
+            user=LDAP_BIND_DN,
+            password=LDAP_BIND_PASSWORD,
+            auto_bind=True,
+            raise_exceptions=True,
+        )
+    except LDAPException as exc:
+        send_alert_email(
+            recipients=ALERT_RECIPIENTS,
+            subject="LDAP Connection Failure",
+            body=f"Failed to connect to LDAP server at {LDAP_URI}.\n\nError: {exc}",
+        )
+        raise
     return conn
 
 
@@ -121,6 +138,7 @@ def flush_alias_tasks(conn: Connection) -> None:
                 exc,
             )
 
+
 def flush_user_tasks(conn: Connection) -> None:
     """Process all rows in UserTaskQueue in id order."""
     for task in UserTaskQueue.objects.all():
@@ -144,6 +162,7 @@ def flush_user_tasks(conn: Connection) -> None:
                 task.alias_name,
                 exc,
             )
+
 
 def run_consistency_check(conn: Connection) -> None:
     """Pull ou=Aliases from LDAP and sync into the Alias cache (DB).

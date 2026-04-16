@@ -312,3 +312,26 @@ class UserSubscriptionUpdateApiTest(TestCase):
 
         self.assertEqual(first.status_code, 202)
         self.assertEqual(second.status_code, 429)
+
+class ConnectAlertTest(TestCase):
+    @patch("apps.subscriptions.tasks.send_alert_email")
+    @patch("apps.subscriptions.tasks.Connection")
+    def test_sends_alert_on_ldap_connection_failure(self, mock_conn_cls, mock_alert):
+        mock_conn_cls.side_effect = LDAPException("connection refused")
+
+        from apps.subscriptions.tasks import _connect
+        with self.assertRaises(LDAPException):
+            _connect()
+
+        mock_alert.assert_called_once()
+        call_kwargs = mock_alert.call_args[1]
+        self.assertEqual(call_kwargs["subject"], "LDAP Connection Failure")
+        self.assertIn("chilfox@csie.ntu.edu.tw", call_kwargs["recipients"])
+
+    @patch("apps.subscriptions.tasks.send_alert_email")
+    @patch("apps.subscriptions.tasks.Connection")
+    def test_no_alert_on_successful_connection(self, mock_conn_cls, mock_alert):
+        # 正常連線不該寄信
+        from apps.subscriptions.tasks import _connect
+        _connect()
+        mock_alert.assert_not_called()

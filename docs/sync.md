@@ -66,6 +66,16 @@ Flush 完成、`user_task_queue` 清空後，立即執行一次 consistency chec
 
 ---
 
+## 錯誤通知（Alert Email）
+
+當 worker 無法連上 LDAP server 時（`_connect()` 拋出 `LDAPException`），系統會透過 SMTP 寄送 alert email 給管理者，再重新拋出例外讓 `flush_ldap_tasks()` 的錯誤處理正常運作。
+
+收件人定義在 `apps/subscriptions/tasks.py` 的 `ALERT_RECIPIENTS`。
+
+SMTP 設定由環境變數控制（見 [setup — 環境變數](./setup.md#環境變數)）。開發環境可搭配 Mailpit（`SMTP_PORT=1025`）攔截信件，不會實際寄出。
+
+---
+
 ## 兩個階段的關係
 
 Consistency Check 不是獨立排程，而是每次 Flush 的後半段：

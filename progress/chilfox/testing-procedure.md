@@ -171,7 +171,7 @@ CSRF=$(grep csrftoken cookies.txt | awk '{print $NF}')
 curl -s -b cookies.txt -X PUT http://localhost:8000/api/v1/user/subscriptions/ \
   -H "Content-Type: application/json" \
   -H "X-CSRFToken: $CSRF" \
-  -d '{"test-list": true, "workstation": false}' | python3 -m json.tool
+  -d '{"test-list": true, "workstation": false, "sw-user": false}' | python3 -m json.tool
 ```
 
 **預期 202**：

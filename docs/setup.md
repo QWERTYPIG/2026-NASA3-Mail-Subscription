@@ -14,6 +14,9 @@
 | `REDIS_QUEUE_URL` | `redis://redis:6379/0` | Django-Q task queue |
 | `REDIS_CACHE_URL` | `redis://redis:6379/1` | Rate limit TTL cache |
 | `LDAP_URI` | `ldap://172.16.127.109:389` | LDAP server |
+| `SMTP_HOST` | `localhost` | Alert email 用的 SMTP server |
+| `SMTP_PORT` | `25` | SMTP port（Mailpit 用 `1025`）|
+| `ALERT_EMAIL_SENDER` | `mailsub-alert@csie.ntu.edu.tw` | Alert email 寄件人 |
 
 > [!warning] Redis index 分開
 > index 0（queue）與 index 1（cache）刻意分開，避免 task queue 的 key 被 cache 操作誤刪。
