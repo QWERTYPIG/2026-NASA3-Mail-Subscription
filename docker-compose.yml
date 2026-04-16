@@ -44,6 +44,9 @@ services:
       - LDAP_URI=${LDAP_URI:-ldap://localhost:389}
       - LDAP_BIND_DN=${LDAP_BIND_DN:-uid=mailtest,ou=people,dc=csie,dc=ntu,dc=edu,dc=tw}
       - LDAP_BIND_PASSWORD=${LDAP_BIND_PASSWORD:-}
+      - SMTP_HOST=${SMTP_HOST:-localhost}
+      - SMTP_PORT=${SMTP_PORT:-25}
+      - ALERT_EMAIL_SENDER=${ALERT_EMAIL_SENDER:-mailsub-alert@csie.ntu.edu.tw}
     depends_on:
       - postgres
       - redis
@@ -67,6 +70,9 @@ services:
       - LDAP_URI=${LDAP_URI:-ldap://localhost:389}
       - LDAP_BIND_DN=${LDAP_BIND_DN:-uid=mailtest,ou=people,dc=csie,dc=ntu,dc=edu,dc=tw}
       - LDAP_BIND_PASSWORD=${LDAP_BIND_PASSWORD:-}
+      - SMTP_HOST=${SMTP_HOST:-localhost}
+      - SMTP_PORT=${SMTP_PORT:-25}
+      - ALERT_EMAIL_SENDER=${ALERT_EMAIL_SENDER:-mailsub-alert@csie.ntu.edu.tw}
     depends_on:
       - postgres
       - redis
