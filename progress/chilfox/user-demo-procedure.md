@@ -16,6 +16,12 @@
 | 一般使用者 | 一般 LDAP 帳號，無 mailAdmin group，`is_staff=false` |
 | Admin | `mailtest`（目前唯一有 mailAdmin group 的帳號） |
 
+### 載入環境變數
+
+```bash
+export $(grep MAILTEST_PASSWORD .env | xargs)
+```
+
 ### 啟動服務（若尚未啟動）
 
 ```bash
@@ -61,12 +67,12 @@ print(list(Alias.objects.values('alias_name', 'display_name')))
 ```bash
 curl -s -c cookies.txt -X POST http://localhost:8000/api/v1/auth/login/ \
   -H "Content-Type: application/json" \
-  -d '{"username": "<LDAP帳號>", "password": "<密碼>"}' | python3 -m json.tool
+  -d '{"username": "b13902992", "password": "b13902992"}' | python3 -m json.tool
 ```
 
 **預期 200**：
 ```json
-{ "username": "b13902xxx", "is_staff": false }
+{ "username": "b13902992", "is_staff": false }
 ```
 
 `cookies.txt` 儲存 `sessionid` 與 `csrftoken`，後續請求使用。
@@ -81,7 +87,7 @@ curl -s -b cookies.txt http://localhost:8000/api/v1/auth/me/ | python3 -m json.t
 
 **預期 200**：
 ```json
-{ "username": "b13902xxx", "is_admin": false }
+{ "username": "b13902992", "is_admin": false }
 ```
 
 ---
@@ -112,25 +118,6 @@ curl -s -b cookies.txt http://localhost:8000/api/v1/user/subscriptions/ | python
   { "alias_name": "workstation", "display_name": "工作站", "description": "...", "is_subscribed": false }
 ]
 ```
-
----
-
-## [Mail Testing — Before Subscription]
-
-> 在 step 4 與 step 5 之間執行，說明使用者尚未訂閱時不在 alias member list 內。
-
-確認 LDAP 端 `test-list` 的 `uniqueMember` 不含使用者（由使用者自行執行）：
-
-```bash
-ldapsearch -H ldap://172.16.127.109:389 \
-  -D "uid=mailtest,ou=people,dc=csie,dc=ntu,dc=edu,dc=tw" \
-  -w <密碼> \
-  -b "ou=Aliases,dc=csie,dc=ntu,dc=edu,dc=tw" \
-  "(cn=test-list)" uniqueMember
-```
-
-**預期**：`uniqueMember` 只有 bind DN placeholder，不含使用者 DN。
-> 此時寄到 `test-list@csie.ntu.edu.tw` 的信不會轉發給使用者。
 
 ---
 
@@ -208,34 +195,17 @@ curl -s -b cookies.txt http://localhost:8000/api/v1/user/subscriptions/ | python
 ]
 ```
 
----
-
-## [Mail Testing — After Subscription]
-
-> 在 step 7 與 step 8 之間執行，說明訂閱同步後使用者已出現在 alias member list 內。
-
 確認 LDAP 端 `test-list` 的 `uniqueMember` 現在包含使用者（由使用者自行執行）：
 
 ```bash
 ldapsearch -H ldap://172.16.127.109:389 \
   -D "uid=mailtest,ou=people,dc=csie,dc=ntu,dc=edu,dc=tw" \
-  -w <密碼> \
+  -w "$MAILTEST_PASSWORD" \
   -b "ou=Aliases,dc=csie,dc=ntu,dc=edu,dc=tw" \
   "(cn=test-list)" uniqueMember
 ```
 
-**預期**：`uniqueMember` 包含 `uid=b13902xxx,ou=people,dc=csie,dc=ntu,dc=edu,dc=tw`。
-> 此時寄到 `test-list@csie.ntu.edu.tw` 的信會轉發給使用者。
-
-或透過 DB 快速確認：
-
-```bash
-docker compose exec web python manage.py shell -c "
-from apps.subscriptions.models import Alias
-a = Alias.objects.get(alias_name='test-list')
-print('Members:', a.user_id)
-"
-```
+**預期**：`uniqueMember` 包含 `uid=b13902992,ou=people,dc=csie,dc=ntu,dc=edu,dc=tw`。
 
 ---
 
@@ -262,46 +232,22 @@ curl -s -b cookies.txt http://localhost:8000/api/v1/user/subscriptions/ | python
 { "detail": "Authentication credentials were not provided." }
 ```
 
----
-
-## 快速 Cheatsheet
+## Step 10 - Mimic consistency check sending alert mail when unable to connect LDAP server
 
 ```bash
-# Step 1 — Login
-curl -s -c cookies.txt -X POST http://localhost:8000/api/v1/auth/login/ \
-  -H "Content-Type: application/json" \
-  -d '{"username": "<LDAP帳號>", "password": "<密碼>"}' | python3 -m json.tool
+docker compose exec web python manage.py shell -c "
+import os
+os.environ['LDAP_URI'] = 'ldap://127.0.0.1:1'
 
-# Step 2 — Get user data
-curl -s -b cookies.txt http://localhost:8000/api/v1/auth/me/ | python3 -m json.tool
+import importlib
+import apps.subscriptions.tasks as t
+importlib.reload(t)
 
-# Step 3 — Get admin page (403)
-curl -s -b cookies.txt http://localhost:8000/api/v1/admin/aliases/ | python3 -m json.tool
-
-# Step 4 — Get aliases
-curl -s -b cookies.txt http://localhost:8000/api/v1/user/subscriptions/ | python3 -m json.tool
-
-# Step 5 — Modify subscriptions (202)
-CSRF=$(grep csrftoken cookies.txt | awk '{print $NF}')
-curl -s -b cookies.txt -X PUT http://localhost:8000/api/v1/user/subscriptions/ \
-  -H "Content-Type: application/json" -H "X-CSRFToken: $CSRF" \
-  -d '{"test-list": true, "workstation": false}' | python3 -m json.tool
-
-# Step 6 — Modify again (429)
-curl -s -b cookies.txt -X PUT http://localhost:8000/api/v1/user/subscriptions/ \
-  -H "Content-Type: application/json" -H "X-CSRFToken: $CSRF" \
-  -d '{"test-list": true, "workstation": false}' | python3 -m json.tool
-
-# Step 7 — Sync + get alias (is_subscribed: true)
-docker compose exec web python manage.py shell -c \
-  "from apps.subscriptions.tasks import flush_ldap_tasks; flush_ldap_tasks()"
-curl -s -b cookies.txt http://localhost:8000/api/v1/user/subscriptions/ | python3 -m json.tool
-
-# Step 8 — Logout (205)
-CSRF=$(grep csrftoken cookies.txt | awk '{print $NF}')
-curl -s -b cookies.txt -c cookies.txt -X POST http://localhost:8000/api/v1/auth/logout/ \
-  -H "X-CSRFToken: $CSRF" -v 2>&1 | grep "< HTTP"
-
-# Step 9 — Get aliases after logout (403)
-curl -s -b cookies.txt http://localhost:8000/api/v1/user/subscriptions/ | python3 -m json.tool
+try:
+    t._connect()
+except Exception as e:
+    print('expected error:', e)
+"
 ```
+
+**預期在 mailpit 看到送給 admin 的 alert mail**
