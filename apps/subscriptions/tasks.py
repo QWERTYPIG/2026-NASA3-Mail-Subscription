@@ -176,8 +176,10 @@ def run_consistency_check(conn: Connection) -> None:
         attributes=["cn", "uniqueMember"],
     )
 
+    ldap_alias_names = set()
     for entry in conn.entries:
         alias_name = entry.cn.value
+        ldap_alias_names.add(alias_name)
         raw_members = entry.uniqueMember.values if entry.uniqueMember else []
 
         user_ids = []
@@ -194,6 +196,8 @@ def run_consistency_check(conn: Connection) -> None:
             alias_name=alias_name,
             defaults={"user_id": user_ids},
         )
+
+    Alias.objects.exclude(alias_name__in=ldap_alias_names).delete()
 
 
 # ---------------------------------------------------------------------------

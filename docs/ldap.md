@@ -22,7 +22,7 @@ dc=csie,dc=ntu,dc=edu,dc=tw
 │   └── uid=<username> # objectClass: posixAccount, inetOrgPerson
 ├── ou=group           # read-only — 群組角色查詢
 │   ├── cn=student     # gidNumber: 450
-│   └── cn=mailAdmin   # Admin 判定依據（見下方），gidNumber: 62100
+│   └── cn=mailAdmin   # Admin 判定依據，gidNumber: 62100
 └── ou=Aliases         # writable — 僅 Django-Q worker 可寫
     ├── cn=ws-user     # objectClass: groupOfUniqueNames
     └── cn=meow-user
