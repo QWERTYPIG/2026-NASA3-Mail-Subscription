@@ -15,13 +15,6 @@
 |------|------|
 | 一般使用者 | 一般 LDAP 帳號，無 mailAdmin group，`is_staff=false` |
 | Admin | `mailtest`（目前唯一有 mailAdmin group 的帳號） |
-
-### 載入環境變數
-
-```bash
-export $(grep MAILTEST_PASSWORD .env | xargs)
-```
-
 ### 啟動服務（若尚未啟動）
 
 ```bash
@@ -65,14 +58,14 @@ print(list(Alias.objects.values('alias_name', 'display_name')))
 ## Step 1 — User Login（預期：Login success）
 
 ```bash
-curl -s -c cookies.txt -X POST http://localhost:8000/api/v1/auth/login/ \
+curl -s -c cookies.txt -X POST http://172.16.127.102:8000/api/v1/auth/login/ \
   -H "Content-Type: application/json" \
-  -d '{"username": "b13902992", "password": "b13902992"}' | python3 -m json.tool
+  -d '{"username": "b13902991", "password": "b13902991"}' | python3 -m json.tool
 ```
 
 **預期 200**：
 ```json
-{ "username": "b13902992", "is_staff": false }
+{ "username": "b13902991", "is_staff": false }
 ```
 
 `cookies.txt` 儲存 `sessionid` 與 `csrftoken`，後續請求使用。
@@ -82,12 +75,12 @@ curl -s -c cookies.txt -X POST http://localhost:8000/api/v1/auth/login/ \
 ## Step 2 — Get User Data（預期：Admin flag set to false）
 
 ```bash
-curl -s -b cookies.txt http://localhost:8000/api/v1/auth/me/ | python3 -m json.tool
+curl -s -b cookies.txt http://172.16.127.102:8000/api/v1/auth/me/ | python3 -m json.tool
 ```
 
 **預期 200**：
 ```json
-{ "username": "b13902992", "is_admin": false }
+{ "username": "b13902991", "is_admin": false }
 ```
 
 ---
@@ -95,7 +88,7 @@ curl -s -b cookies.txt http://localhost:8000/api/v1/auth/me/ | python3 -m json.t
 ## Step 3 — Get Admin Page（預期：Fail — no permission）
 
 ```bash
-curl -s -b cookies.txt http://localhost:8000/api/v1/admin/aliases/ | python3 -m json.tool
+curl -s -b cookies.txt http://172.16.127.102:8000/api/v1/admin/aliases/ | python3 -m json.tool
 ```
 
 **預期 403**：
@@ -108,7 +101,7 @@ curl -s -b cookies.txt http://localhost:8000/api/v1/admin/aliases/ | python3 -m 
 ## Step 4 — Get Aliases（預期：List of aliases and status）
 
 ```bash
-curl -s -b cookies.txt http://localhost:8000/api/v1/user/subscriptions/ | python3 -m json.tool
+curl -s -b cookies.txt http://172.16.127.102:8000/api/v1/user/subscriptions/ | python3 -m json.tool
 ```
 
 **預期 200**，每筆含 `is_subscribed` 欄位，初始皆為 `false`：
@@ -132,7 +125,7 @@ CSRF=$(grep csrftoken cookies.txt | awk '{print $NF}')
 送出訂閱更新（完整 alias→boolean map）：
 
 ```bash
-curl -s -b cookies.txt -X PUT http://localhost:8000/api/v1/user/subscriptions/ \
+curl -s -b cookies.txt -X PUT http://172.16.127.102:8000/api/v1/user/subscriptions/ \
   -H "Content-Type: application/json" \
   -H "X-CSRFToken: $CSRF" \
   -d '{"test-list": true, "workstation": false}' | python3 -m json.tool
@@ -155,10 +148,10 @@ curl -s -b cookies.txt -X PUT http://localhost:8000/api/v1/user/subscriptions/ \
 立刻再送一次相同請求（10 分鐘 cooldown 未到）：
 
 ```bash
-curl -s -b cookies.txt -X PUT http://localhost:8000/api/v1/user/subscriptions/ \
+curl -s -b cookies.txt -X PUT http://172.16.127.102:8000/api/v1/user/subscriptions/ \
   -H "Content-Type: application/json" \
   -H "X-CSRFToken: $CSRF" \
-  -d '{"test-list": true, "workstation": false}' | python3 -m json.tool
+  -d '{"test-list": false, "workstation": false}' | python3 -m json.tool
 ```
 
 **預期 429**：
@@ -184,7 +177,7 @@ flush_ldap_tasks()
 再查 alias 清單：
 
 ```bash
-curl -s -b cookies.txt http://localhost:8000/api/v1/user/subscriptions/ | python3 -m json.tool
+curl -s -b cookies.txt http://172.16.127.102:8000/api/v1/user/subscriptions/ | python3 -m json.tool
 ```
 
 **預期 200**，`test-list` 的 `is_subscribed` 現為 `true`：
@@ -200,12 +193,12 @@ curl -s -b cookies.txt http://localhost:8000/api/v1/user/subscriptions/ | python
 ```bash
 ldapsearch -H ldap://172.16.127.109:389 \
   -D "uid=mailtest,ou=people,dc=csie,dc=ntu,dc=edu,dc=tw" \
-  -w "$MAILTEST_PASSWORD" \
+  -w "muddyq-dysqe8-sEdteb" \
   -b "ou=Aliases,dc=csie,dc=ntu,dc=edu,dc=tw" \
   "(cn=test-list)" uniqueMember
 ```
 
-**預期**：`uniqueMember` 包含 `uid=b13902992,ou=people,dc=csie,dc=ntu,dc=edu,dc=tw`。
+**預期**：`uniqueMember` 包含 `uid=b13902991,ou=people,dc=csie,dc=ntu,dc=edu,dc=tw`。
 
 ---
 
@@ -213,7 +206,7 @@ ldapsearch -H ldap://172.16.127.109:389 \
 
 ```bash
 CSRF=$(grep csrftoken cookies.txt | awk '{print $NF}')
-curl -s -b cookies.txt -c cookies.txt -X POST http://localhost:8000/api/v1/auth/logout/ \
+curl -s -b cookies.txt -c cookies.txt -X POST http://172.16.127.102:8000/api/v1/auth/logout/ \
   -H "X-CSRFToken: $CSRF" -v 2>&1 | grep "< HTTP"
 ```
 
@@ -224,7 +217,7 @@ curl -s -b cookies.txt -c cookies.txt -X POST http://localhost:8000/api/v1/auth/
 ## Step 9 — Get Aliases After Logout（預期：Fail — no credentials）
 
 ```bash
-curl -s -b cookies.txt http://localhost:8000/api/v1/user/subscriptions/ | python3 -m json.tool
+curl -s -b cookies.txt http://172.16.127.102:8000/api/v1/user/subscriptions/ | python3 -m json.tool
 ```
 
 **預期 403**（session 已清除）：

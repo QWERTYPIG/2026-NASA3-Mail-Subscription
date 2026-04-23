@@ -7,12 +7,6 @@
 |------|------|
 | Admin | `mailtest`（目前唯一有 mailAdmin group 的帳號） |
 
-### 載入環境變數
-
-```bash
-export $(grep MAILTEST_PASSWORD .env | xargs)
-```
-
 ### 啟動服務（若尚未啟動）
 
 ```bash
@@ -29,9 +23,9 @@ docker compose logs worker --tail=30
 ## Step 1 — Admin Login（預期：Login success）
 
 ```bash
-curl -s -c cookies.txt -X POST http://localhost:8000/api/v1/auth/login/ \
+curl -s -c cookies.txt -X POST http://172.16.127.102:8000/api/v1/auth/login/ \
   -H "Content-Type: application/json" \
-  -d "{\"username\": \"mailtest\", \"password\": \"$MAILTEST_PASSWORD\"}" | python3 -m json.tool
+  -d "{\"username\": \"mailtest\", \"password\": \"muddyq-dysqe8-sEdteb\"}" | python3 -m json.tool
 ```
 
 **預期 200**：
@@ -46,7 +40,7 @@ curl -s -c cookies.txt -X POST http://localhost:8000/api/v1/auth/login/ \
 ## Step 2 — Get User Data（預期：Admin flag set to true）
 
 ```bash
-curl -s -b cookies.txt http://localhost:8000/api/v1/auth/me/ | python3 -m json.tool
+curl -s -b cookies.txt http://172.16.127.102:8000/api/v1/auth/me/ | python3 -m json.tool
 ```
 
 **預期 200**：
@@ -59,7 +53,7 @@ curl -s -b cookies.txt http://localhost:8000/api/v1/auth/me/ | python3 -m json.t
 ## Step 3 — Get All Aliases（預期：List of all aliases）
 
 ```bash
-curl -s -b cookies.txt http://localhost:8000/api/v1/admin/aliases/ | python3 -m json.tool
+curl -s -b cookies.txt http://172.16.127.102:8000/api/v1/admin/aliases/ | python3 -m json.tool
 ```
 
 **預期 200**，回傳所有 alias 清單（不含 `is_subscribed` 欄位）：
@@ -76,7 +70,7 @@ curl -s -b cookies.txt http://localhost:8000/api/v1/admin/aliases/ | python3 -m 
 
 ```bash
 CSRF=$(grep csrftoken cookies.txt | awk '{print $NF}')
-curl -s -b cookies.txt -c cookies.txt -X POST http://localhost:8000/api/v1/auth/logout/ \
+curl -s -b cookies.txt -c cookies.txt -X POST http://172.16.127.102:8000/api/v1/auth/logout/ \
   -H "X-CSRFToken: $CSRF" -v 2>&1 | grep "< HTTP"
 ```
 
@@ -87,7 +81,7 @@ curl -s -b cookies.txt -c cookies.txt -X POST http://localhost:8000/api/v1/auth/
 ## Step 5 — Get All Aliases After Logout（預期：Fail — no credentials）
 
 ```bash
-curl -s -b cookies.txt http://localhost:8000/api/v1/admin/aliases/ | python3 -m json.tool
+curl -s -b cookies.txt http://172.16.127.102:8000/api/v1/admin/aliases/ | python3 -m json.tool
 ```
 
 **預期 403**（session 已清除）：
