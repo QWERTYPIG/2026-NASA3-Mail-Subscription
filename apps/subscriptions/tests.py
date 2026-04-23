@@ -195,6 +195,121 @@ class AliasListApiTest(TestCase):
         self.assertFalse(workstation_item["is_subscribed"])
 
 
+class AdminAliasCreateApiTest(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.user_model = get_user_model()
+
+        self.normal_user = self.user_model.objects.create_user(
+            username="user1", password="pass", is_staff=False
+        )
+        self.admin_user = self.user_model.objects.create_user(
+            username="admin1", password="pass", is_staff=True
+        )
+
+        Alias.objects.create(
+            alias_name="existing-alias",
+            display_name="Existing Alias",
+            description="An alias that already exists.",
+        )
+
+    def test_create_alias_requires_admin(self):
+        """Only admin users can create aliases."""
+        self.client.force_authenticate(user=self.normal_user)
+        payload = {
+            "alias_name": "new-alias",
+            "display_name": "New Alias",
+            "description": "A new alias.",
+        }
+        resp = self.client.post("/api/v1/admin/aliases/", payload, format="json")
+        self.assertEqual(resp.status_code, 403)
+
+    def test_create_alias_requires_auth(self):
+        """Unauthenticated request should be rejected."""
+        payload = {
+            "alias_name": "new-alias",
+            "display_name": "New Alias",
+            "description": "A new alias.",
+        }
+        resp = self.client.post("/api/v1/admin/aliases/", payload, format="json")
+        self.assertEqual(resp.status_code, 403)
+
+    def test_create_alias_success(self):
+        """Admin can create a new alias."""
+        self.client.force_authenticate(user=self.admin_user)
+        payload = {
+            "alias_name": "new-alias",
+            "display_name": "New Alias",
+            "description": "A new alias for testing.",
+        }
+        resp = self.client.post("/api/v1/admin/aliases/", payload, format="json")
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.data["alias_name"], "new-alias")
+        self.assertEqual(resp.data["display_name"], "New Alias")
+        self.assertEqual(resp.data["description"], "A new alias for testing.")
+        self.assertTrue(Alias.objects.filter(alias_name="new-alias").exists())
+
+        # Verify that a task has been created in the queue
+        self.assertTrue(
+            AliasTaskQueue.objects.filter(
+                alias_name="new-alias", action="add"
+            ).exists()
+        )
+
+    def test_create_alias_missing_fields(self):
+        """Request fails if required fields are missing."""
+        self.client.force_authenticate(user=self.admin_user)
+        payload = {
+            "alias_name": "another-alias",
+            # display_name is missing
+            "description": "A new alias.",
+        }
+        resp = self.client.post("/api/v1/admin/aliases/", payload, format="json")
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("display_name", resp.data)
+
+    def test_create_alias_duplicate_name(self):
+        """Request fails if alias_name already exists."""
+        self.client.force_authenticate(user=self.admin_user)
+        payload = {
+            "alias_name": "existing-alias",
+            "display_name": "Trying to create a duplicate",
+            "description": "This should fail.",
+        }
+        resp = self.client.post("/api/v1/admin/aliases/", payload, format="json")
+        self.assertEqual(resp.status_code, 409)
+        self.assertEqual(resp.data["code"], "CONFLICT")
+
+    def test_create_alias_invalid_name_format(self):
+        """Request fails if alias_name has invalid characters."""
+        self.client.force_authenticate(user=self.admin_user)
+        payload = {
+            "alias_name": "Invalid Name",
+            "display_name": "Invalid Alias",
+            "description": "This should fail due to invalid name format.",
+        }
+        resp = self.client.post("/api/v1/admin/aliases/", payload, format="json")
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("alias_name", resp.data)
+
+    @patch("apps.subscriptions.views.AliasTaskQueue.objects.create")
+    def test_create_alias_rolls_back_when_queue_insert_fails(self, mock_queue_create):
+        """Alias creation and queue insert should be atomic."""
+        mock_queue_create.side_effect = Exception("queue insert failed")
+
+        self.client.force_authenticate(user=self.admin_user)
+        payload = {
+            "alias_name": "atomic-alias",
+            "display_name": "Atomic Alias",
+            "description": "Should rollback on queue failure",
+        }
+
+        resp = self.client.post("/api/v1/admin/aliases/", payload, format="json")
+        self.assertEqual(resp.status_code, 500)
+        self.assertEqual(resp.data["code"], "INTERNAL_SERVER_ERROR")
+        self.assertFalse(Alias.objects.filter(alias_name="atomic-alias").exists())
+
+
 class UserSubscriptionUpdateSerializerTest(TestCase):
     def setUp(self):
         Alias.objects.create(alias_name="activities", display_name="Activities")

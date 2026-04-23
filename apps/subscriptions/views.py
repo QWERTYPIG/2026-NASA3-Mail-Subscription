@@ -1,27 +1,76 @@
 from django.db import transaction
-from rest_framework import status
+from rest_framework import generics, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.accounts.permissions import IsAdminUser
 
-from .models import Alias, UserTaskQueue
+from .models import Alias, AliasTaskQueue, UserTaskQueue
 from .serializers import (
     AliasSerializer,
+    AliasCreateSerializer,
     SubscriptionSerializer,
     UserSubscriptionUpdateSerializer,
 )
 from .throttles import UserSubscriptionCooldownThrottle
 
 
-class AdminAliasListView(APIView):
+class AdminAliasListView(generics.ListCreateAPIView):
     permission_classes = [IsAdminUser]
+    queryset = Alias.objects.all().order_by("alias_name")
 
-    def get(self, request):
-        aliases = Alias.objects.all().order_by("alias_name")
-        serializer = AliasSerializer(aliases, many=True)
-        return Response(serializer.data)
+    def get_serializer_class(self):
+        if self.request.method == 'POST':
+            return AliasCreateSerializer
+        return AliasSerializer
+
+    def create(self, request, *args, **kwargs):
+        alias_name = request.data.get("alias_name")
+        if alias_name and Alias.objects.filter(alias_name=alias_name).exists():
+            return Response(
+                {
+                    "error": "Alias name already exists.",
+                    "code": "CONFLICT",
+                    "details": {"existing_alias": alias_name},
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            with transaction.atomic():
+                instance = serializer.save()
+                AliasTaskQueue.objects.create(
+                    alias_name=instance.alias_name,
+                    action="add",
+                )
+        except Exception:
+            return Response(
+                {
+                    "error": "An unexpected error occurred. Please contact the administrator.",
+                    "code": "INTERNAL_SERVER_ERROR",
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        headers = self.get_success_headers(serializer.data)
+        return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+
+
+class AdminAliasDetailView(generics.RetrieveUpdateDestroyAPIView):
+    permission_classes = [IsAdminUser]
+    queryset = Alias.objects.all()
+    serializer_class = AliasSerializer
+    lookup_field = "alias_name"
+
+    def perform_destroy(self, instance):
+        AliasTaskQueue.objects.create(
+            alias_name=instance.alias_name,
+            action="remove",
+        )
+        instance.delete()
 
 
 class UserSubscriptionListView(APIView):
