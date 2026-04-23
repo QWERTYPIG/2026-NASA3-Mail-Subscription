@@ -119,20 +119,230 @@ X-CSRFToken: <csrftoken cookie 的值>
 
 ### `GET /api/v1/admin/aliases/`
 
+取得所有 alias 列表。
+
 **Admin** — 回傳 alias 列表，無需 `is_subscribed` 欄位（admin 不訂閱，只管理成員）。
+
+**Response `200 OK`**
 
 ```json
 [
   {
     "alias_name": "workstation",
     "display_name": "工作站",
-    "description": "工作站清理、重開機公告",
+    "description": "工作站清理、重開機公告"
   },
   {
     "alias_name": "activities",
     "display_name": "系上活動",
-    "description": "演講、交流",
+    "description": "演講、交流"
   }
 ]
+```
+
+---
+
+### `POST /api/v1/admin/aliases/`
+
+建立新的 mailing list alias。
+
+**Permission** — `IsAdminUser`
+
+**Request header**
+
+```
+X-CSRFToken: <csrftoken cookie 的值>
+```
+
+**Request body**
+
+```json
+{
+  "alias_name": "new_alias",
+  "display_name": "新群組",
+  "description": "這是一個新建立的群組"
+}
+```
+
+**Response `201 Created`**
+
+```json
+{
+  "alias_name": "new_alias",
+  "display_name": "新群組",
+  "description": "這是一個新建立的群組"
+}
+```
+
+---
+
+### `DELETE /api/v1/admin/aliases/<alias_name>/`
+
+刪除整個 mailing list alias。
+
+**Permission** — `IsAdminUser`
+
+**Request header**
+
+```
+X-CSRFToken: <csrftoken cookie 的值>
+```
+
+**Response `204 No Content`**
+
+---
+
+### `GET /api/v1/admin/aliases/<alias_name>/users/`
+
+取得指定 alias 的所有訂閱用戶列表。
+
+**Permission** — `IsAdminUser`
+
+**Response `200 OK`**
+
+```json
+[
+  "b13902001",
+  "b13902002",
+  "b13902003"
+]
+```
+
+---
+
+### `POST /api/v1/admin/aliases/<alias_name>/users/`
+
+手動將指定用戶（依 UID）加入到 alias。
+
+**Permission** — `IsAdminUser`
+
+**Request header**
+
+```
+X-CSRFToken: <csrftoken cookie 的值>
+```
+
+**Request body**
+
+```json
+{
+  "uid": "b13902xxx"
+}
+```
+
+**Response `200 OK`**
+
+```json
+{
+  "status": "success",
+  "message": "用戶已加入此 alias"
+}
+```
+
+---
+
+### `DELETE /api/v1/admin/aliases/<alias_name>/users/<uid>/`
+
+手動移除指定用戶從 alias。
+
+**Permission** — `IsAdminUser`
+
+**Request header**
+
+```
+X-CSRFToken: <csrftoken cookie 的值>
+```
+
+**Response `204 No Content`**
+
+---
+
+## Error Responses
+
+### `400 Bad Request`
+
+**Validation Error**
+
+```json
+{
+  "error": "Validation failed",
+  "code": "VALIDATION_ERROR",
+  "details": {
+    "alias_name": ["Alias name can only contain lowercase letters and numbers."],
+    "uid": ["Ensure this field has exactly 9 characters."]
+  }
+}
+```
+
+### `401 Unauthorized`
+
+**Authentication Error**
+
+```json
+{
+  "error": "Authentication credentials were not provided or CSRF verification failed.",
+  "code": "NOT_AUTHENTICATED"
+}
+```
+
+### `403 Forbidden`
+
+**Permission Denied**
+
+```json
+{
+  "error": "You do not have permission to perform this action.",
+  "code": "PERMISSION_DENIED"
+}
+```
+
+### `404 Not Found`
+
+**Resource Not Found**
+
+```json
+{
+  "error": "The requested resource was not found.",
+  "code": "NOT_FOUND"
+}
+```
+
+### `409 Conflict`
+
+**Resource Already Exists**
+
+```json
+{
+  "error": "Alias name already exists.",
+  "code": "CONFLICT",
+  "details": {
+    "existing_alias": "workstation"
+  }
+}
+```
+
+### `429 Too Many Requests`
+
+**Rate Limited**
+
+```json
+{
+  "error": "Request was throttled.",
+  "code": "TOO_MANY_REQUESTS",
+  "details": {
+    "wait_seconds": 45
+  }
+}
+```
+
+### `500 Internal Server Error`
+
+**Server Error**
+
+```json
+{
+  "error": "An unexpected error occurred. Please contact the administrator.",
+  "code": "INTERNAL_SERVER_ERROR"
+}
 ```
 
