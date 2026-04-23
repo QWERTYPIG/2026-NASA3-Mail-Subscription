@@ -173,6 +173,42 @@ X-CSRFToken: <csrftoken cookie 的值>
   "description": "這是一個新建立的群組"
 }
 ```
+---
+
+### `PATCH /api/v1/admin/aliases/<alias_name>/`
+
+更新指定 alias 的顯示名稱 (`display_name`) 或介紹 (`description`)。
+
+**Permission** — `IsAdminUser`
+
+**Request header**
+
+```
+X-CSRFToken: <csrftoken cookie 的值>
+```
+*(依據安全設定，所有資料異動請求必須包含 CSRF Token)*
+
+**Request body**
+
+只需要傳遞想要更新的欄位即可：
+
+```json
+{
+  "display_name": "新工作站公告",
+  "description": "更新後的工作站清理、重開機與維護公告"
+}
+```
+
+**Response `200 OK`**
+
+```json
+{
+  "alias_name": "workstation",
+  "display_name": "新工作站公告",
+  "description": "更新後的工作站清理、重開機與維護公告"
+}
+```
+
 
 ---
 
