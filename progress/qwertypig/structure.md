@@ -45,6 +45,10 @@ edit `settings.py`
 * `apps/accounts/urls.py`: map views to url endpoints
 * `core/urls.py`: add `path('api/v1/auth/', include('apps.accounts.urls')),` to map accounts url with desired prefix
 
+### Frontend Integration
+- add `authentication_classes = []` in LoginView in `apps/accounts/views.py`
+- add `CSRF_TRUSTED_ORIGINS` in `core/settings.py`
+
 ### Testing
 run docker: `docker compose up -d`
 migrate tables written in python to postgresql: `docker compose exec web python manage.py migrate` (only when first setting up database)
