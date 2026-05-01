@@ -6,6 +6,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework import status
 
 class LoginView(APIView):
+    authentication_classes = []
     permission_classes = [AllowAny]
 
     def post(self, request):

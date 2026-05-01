@@ -173,7 +173,11 @@ SESSION_COOKIE_SAMESITE = "Lax"
 # Require HTTPS in production (Set to False ONLY during local development)
 SESSION_COOKIE_SECURE = False
 CSRF_COOKIE_SECURE = False
-
+# trust tokens sent from Vite
+CSRF_TRUSTED_ORIGINS = [
+    "http://localhost:55111",
+    "http://127.0.0.1:55111",
+]
 # Authentication
 AUTHENTICATION_BACKENDS = [
     "django_auth_ldap.backend.LDAPBackend",
