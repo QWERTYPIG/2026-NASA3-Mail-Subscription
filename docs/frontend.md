@@ -1,6 +1,7 @@
 # Frontend
 Frontend code is copied from [UI-UX's repo](https://github.com/2026-NTUCSIE-NASA-UIUX/Mail-Subscription-Frontend/)
 Currently their repo is cloned locally, and needed files are copied to `frontend` for usage.
+Connect to frontend at port `55111`.
 ## Structure
 ```text
 .
