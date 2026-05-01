@@ -21,12 +21,15 @@ export default function LoginPage({ currentUser, onLoginSuccess }) {
 
     try {
       // 呼叫後端登入 API
-      const res = await api.post('/login', { username, password });
+      const res = await api.post('/auth/login/', { username, password });
       
-      if (res.data.user) {
-        toast.success(`歡迎回來，${res.data.user.username}！`);
+      if (res.data && res.data.username) {
+        toast.success(`歡迎回來，${res.data.username}！`);
         // 通知 App.jsx 更新全域狀態
-        onLoginSuccess(res.data.user);
+        onLoginSuccess({
+          username: res.data.username,
+          role: res.data.is_staff ? 'admin' : 'user'
+        });
         navigate('/');
       }
     } catch (err) {

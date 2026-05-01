@@ -32,10 +32,13 @@ export default function App() {
   useEffect(() => {
     const checkAuth = async () => {
       try {
-        const res = await api.get('/me');
-        // 根據後端回傳結構 { authenticated: true, user: { id, username, role } }
-        if (res.data.authenticated) {
-          setCurrentUser(res.data.user);
+        const res = await api.get('/auth/me/');
+        // Django returns 200 OK with { username: "...", is_admin: true/false }
+        if (res.data && res.data.username) {
+          setCurrentUser({
+            username: res.data.username,
+            role: res.data.is_admin ? 'admin' : 'user' // Translate boolean to string
+          });
         }
       } catch {
         setCurrentUser(null);
@@ -49,10 +52,10 @@ export default function App() {
   // 2. 登出處理
   const handleLogout = async () => {
     try {
-      await api.post('/logout');
+      await api.post('/auth/logout/');
       setCurrentUser(null);
       // 直接使用 navigate 或 window.location
-      window.location.href = '/login';
+      window.location.href = '/login/';
     } catch (err) {
       console.error("登出失敗", err);
     }
@@ -175,7 +178,7 @@ export default function App() {
         </main>
 
         <footer className="bg-white py-6 text-center text-gray-400 text-sm border-t">
-          <p>© 2026 Mail-Subscription Project · Built with React & Node.js</p>
+          <p>© 2026 Mail-Subscription Project · Built with React & Django</p>
         </footer>
       </div>
     </BrowserRouter>

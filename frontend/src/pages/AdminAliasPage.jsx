@@ -12,7 +12,7 @@ const AdminAliasPage = () => {
 
   const fetchAliases = async () => {
     try {
-      const res = await api.get('/admin/aliases');
+      const res = await api.get('/admin/aliases/');
       setAliases(res.data);
     } catch {
       toast.error("無法取得別名清單");
@@ -26,7 +26,11 @@ const AdminAliasPage = () => {
   const handleCreate = async (e) => {
     e.preventDefault();
     try {
-      await api.post('/admin/aliases', newAlias);
+      await api.post('/admin/aliases/', {
+        alias_name: newAlias.name,       // Map to Django format
+        display_name: newAlias.name,     // Default display name
+        description: newAlias.description          
+      });
       toast.success("別名建立成功");
       setShowModal(false);
       setNewAlias({ name: '', description: '' });

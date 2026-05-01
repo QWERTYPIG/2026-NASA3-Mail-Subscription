@@ -17,12 +17,12 @@ const AliasDetail = () => {
 	useEffect(() => { 
 		const fetchData = async () => {
 			try {
-				const aliasRes = await api.get(`/admin/aliases/${id}`);
+				const aliasRes = await api.get(`/admin/aliases/${id}/`);
 				setAlias(aliasRes.data);
 				setAllMembers(aliasRes.data.members);
 			} catch {
 				toast.error("無法載入資料");
-				navigate('/admin/aliases'); // 失敗則退回列表
+				navigate('/admin/aliases/'); // 失敗則退回列表
 			} finally {
 				setLoading(false);
 			}
@@ -35,7 +35,7 @@ const AliasDetail = () => {
 		e.preventDefault();
 		setSaving(true);
 		try {
-			await api.patch(`/admin/aliases/${id}`, alias);
+			await api.patch(`/admin/aliases/${id}/`, alias);
 			toast.success("更新成功");
 		} catch {
 			toast.error("更新失敗");
@@ -49,7 +49,7 @@ const AliasDetail = () => {
 
 		try {
 			// 呼叫我們之前定義的管理員訂閱 API
-			await api.post(`/admin/aliases/${id}/subscriptions`, {
+			await api.post(`/admin/aliases/${id}/subscriptions/`, {
 				user_id: userId,
 				action: action
 			});

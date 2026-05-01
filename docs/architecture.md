@@ -10,7 +10,7 @@
 
 | 層級 | 技術 | 職責 |
 |------|------|------|
-| 前端 | React | 訂閱 UI、Admin 管理介面 |
+| 前端 | React + Vite | 訂閱 UI、Admin 管理介面 |
 | 後端 | Django + DRF | API、身份驗證、業務邏輯 |
 | 資料庫 | PostgreSQL | Alias cache、Task queue |
 | Task queue | Redis index 0 | Django-Q task queue |

@@ -79,25 +79,25 @@ services:
     networks:
       - mail_net
 
-    #5. frontend interface (React)
-    frontend:
-        build: 
-          context: ./frontend
-          dockerfile: Dockerfile
-        command: npm run dev -- --host 0.0.0.0 #force listen to docker network traffic
-        volumes:
-          - ./frontend:/app
-          - /app/node_modules
-        ports:
-          - "${VITE_PORT:-55111}:${VITE_PORT:-55111}"
-        environment:
-          # This is the magic link between the containers
-          - VITE_API_TARGET=http://web:8000
-          - VITE_PORT=${VITE_PORT:-55111}
-        networks:
-          - mail_net
-        depends_on:
-          - web
+  #frontend interface (React)
+  frontend:
+      build: 
+        context: ./frontend
+        dockerfile: Dockerfile
+      command: npm run dev -- --host 0.0.0.0 #force listen to docker network traffic
+      volumes:
+        - ./frontend:/app
+        - /app/node_modules
+      ports:
+        - "${VITE_PORT:-55111}:${VITE_PORT:-55111}"
+      environment:
+        # This is the magic link between the containers
+        - VITE_API_TARGET=http://web:8000
+        - VITE_PORT=${VITE_PORT:-55111}
+      networks:
+        - mail_net
+      depends_on:
+        - web
 
 volumes:
   postgres_data:
