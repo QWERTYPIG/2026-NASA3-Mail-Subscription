@@ -52,7 +52,7 @@ close docker: `docker compose down` (add `-v` if wish to destroy databases)
 
 #### Test admin
 login:
-```bash
+```
 curl -i -X POST http://localhost:8000/api/v1/auth/login/ \
      -H "Content-Type: application/json" \
      -d '{"username": "mailtest", "password": "<redacted>"}' \
@@ -77,7 +77,7 @@ Set-Cookie:  sessionid=e0c94e2x4cgrwfqp6ss0xiqocchqq9lf; expires=Mon, 20 Apr 202
 {"username":"mailtest","is_staff":true}
 ```
 check session:
-```bash
+```
 curl -i -X GET http://localhost:8000/api/v1/auth/me/ \
      -b cookies.txt
 ```
@@ -98,7 +98,7 @@ Cross-Origin-Opener-Policy: same-origin
 {"username":"mailtest","is_admin":true}
 ```
 logout:
-```bash
+```
 curl -i -X POST http://localhost:8000/api/v1/auth/logout/ \
      -b cookies.txt \
      -H "X-CSRFToken: <csrf token as in cookies.txt>"
