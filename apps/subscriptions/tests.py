@@ -310,6 +310,67 @@ class AdminAliasCreateApiTest(TestCase):
         self.assertFalse(Alias.objects.filter(alias_name="atomic-alias").exists())
 
 
+class AdminAliasPatchApiTest(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.user_model = get_user_model()
+
+        self.admin_user = self.user_model.objects.create_user(
+            username="admin1", password="pass", is_staff=True
+        )
+
+        Alias.objects.create(
+            alias_name="workstation",
+            display_name="Workstation",
+            description="Lab announcements",
+        )
+
+    def test_patch_alias_not_found(self):
+        self.client.force_authenticate(user=self.admin_user)
+        payload = {"display_name": "New Name"}
+        resp = self.client.patch(
+            "/api/v1/admin/aliases/not-exist/",
+            payload,
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 404)
+        self.assertEqual(resp.data.get("code"), "NOT_FOUND")
+
+    def test_patch_alias_success(self):
+        self.client.force_authenticate(user=self.admin_user)
+        payload = {
+            "display_name": "New Workstation",
+            "description": "Updated announcements",
+        }
+        resp = self.client.patch(
+            "/api/v1/admin/aliases/workstation/",
+            payload,
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data["display_name"], "New Workstation")
+        self.assertEqual(resp.data["description"], "Updated announcements")
+
+        alias = Alias.objects.get(alias_name="workstation")
+        self.assertEqual(alias.display_name, "New Workstation")
+        self.assertEqual(alias.description, "Updated announcements")
+
+    def test_patch_alias_single_field(self):
+        self.client.force_authenticate(user=self.admin_user)
+        payload = {"display_name": "Workstation Lite"}
+        resp = self.client.patch(
+            "/api/v1/admin/aliases/workstation/",
+            payload,
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data["display_name"], "Workstation Lite")
+
+        alias = Alias.objects.get(alias_name="workstation")
+        self.assertEqual(alias.display_name, "Workstation Lite")
+        self.assertEqual(alias.description, "Lab announcements")
+        
+
 class UserSubscriptionUpdateSerializerTest(TestCase):
     def setUp(self):
         Alias.objects.create(alias_name="activities", display_name="Activities")

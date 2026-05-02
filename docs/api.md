@@ -173,6 +173,11 @@ X-CSRFToken: <csrftoken cookie 的值>
   "description": "這是一個新建立的群組"
 }
 ```
+
+**Possible Errors**
+
+- `400 Bad Request` — 欄位驗證失敗（例如 `alias_name` 包含非法字元）。
+- `409 Conflict` — `alias_name` 已存在。
 ---
 
 ### `PATCH /api/v1/admin/aliases/<alias_name>/`
@@ -199,6 +204,11 @@ X-CSRFToken: <csrftoken cookie 的值>
 }
 ```
 
+**Validation**
+
+- `display_name`：最長 255 字元
+- `description`：最長 500 字元
+
 **Response `200 OK`**
 
 ```json
@@ -208,6 +218,32 @@ X-CSRFToken: <csrftoken cookie 的值>
   "description": "更新後的工作站清理、重開機與維護公告"
 }
 ```
+
+**Possible Errors**
+
+- `400 Bad Request` — 欄位驗證失敗（例如 `display_name` 或 `description` 超過字數限制）。
+
+```json
+{
+  "error": "Validation failed",
+  "code": "VALIDATION_ERROR",
+  "details": {
+    "display_name": ["Ensure this field has no more than 255 characters."],
+    "description": ["Ensure this field has no more than 500 characters."]
+  }
+}
+```
+
+- `404 Not Found` — 指定的 alias 不存在。
+
+```json
+{
+  "error": "The requested resource was not found.",
+  "code": "NOT_FOUND"
+}
+```
+
+- `500 Internal Server Error` — 伺服器錯誤。
 
 
 ---

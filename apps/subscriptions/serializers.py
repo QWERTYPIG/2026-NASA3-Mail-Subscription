@@ -27,6 +27,26 @@ class AliasCreateSerializer(serializers.ModelSerializer):
         return value
 
 
+class AliasUpdateSerializer(serializers.ModelSerializer):
+    """Admin alias update (PATCH)."""
+
+    class Meta:
+        model = Alias
+        fields = ["display_name", "description"]
+        extra_kwargs = {
+            "display_name": {
+                "required": False,
+                "allow_blank": True,
+                "max_length": 255,
+            },
+            "description": {
+                "required": False,
+                "allow_blank": True,
+                "max_length": 500,
+            },
+        }
+
+
 class SubscriptionSerializer(serializers.ModelSerializer):
     """User alias listing with subscription status."""
 
