@@ -262,6 +262,19 @@ X-CSRFToken: <csrftoken cookie 的值>
 
 **Response `204 No Content`**
 
+**Possible Errors**
+
+- `404 Not Found` — 指定的 alias 不存在。
+
+```json
+{
+  "error": "The requested resource was not found.",
+  "code": "NOT_FOUND"
+}
+```
+
+- `500 Internal Server Error` — 伺服器錯誤（例如 Queue 寫入失敗）。
+
 ---
 
 ### `GET /api/v1/admin/aliases/<alias_name>/users/`

@@ -109,6 +109,32 @@ class AdminAliasDetailView(generics.RetrieveUpdateDestroyAPIView):
 
         return Response(serializer.data)
 
+    def destroy(self, request, *args, **kwargs):
+        try:
+            instance = self.get_object()
+        except Http404:
+            return Response(
+                {
+                    "error": "The requested resource was not found.",
+                    "code": "NOT_FOUND",
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        try:
+            with transaction.atomic():
+                self.perform_destroy(instance)
+        except Exception:
+            return Response(
+                {
+                    "error": "An unexpected error occurred. Please contact the administrator.",
+                    "code": "INTERNAL_SERVER_ERROR",
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
     def perform_destroy(self, instance):
         AliasTaskQueue.objects.create(
             alias_name=instance.alias_name,

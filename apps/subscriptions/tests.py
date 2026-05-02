@@ -511,3 +511,49 @@ class ConnectAlertTest(TestCase):
         from apps.subscriptions.tasks import _connect
         _connect()
         mock_alert.assert_not_called()
+
+class AdminAliasDeleteApiTest(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.user_model = get_user_model()
+
+        self.normal_user = self.user_model.objects.create_user(
+            username="user1", password="pass", is_staff=False
+        )
+        self.admin_user = self.user_model.objects.create_user(
+            username="admin1", password="pass", is_staff=True
+        )
+
+        Alias.objects.create(
+            alias_name="todelete",
+            display_name="To Delete",
+            description="Will be deleted",
+        )
+
+    def test_delete_requires_admin(self):
+        self.client.force_authenticate(user=self.normal_user)
+        resp = self.client.delete("/api/v1/admin/aliases/todelete/")
+        self.assertEqual(resp.status_code, 403)
+
+    def test_delete_alias_not_found(self):
+        self.client.force_authenticate(user=self.admin_user)
+        resp = self.client.delete("/api/v1/admin/aliases/not-exist/")
+        self.assertEqual(resp.status_code, 404)
+        self.assertEqual(resp.data.get("code"), "NOT_FOUND")
+
+    def test_delete_alias_success(self):
+        self.client.force_authenticate(user=self.admin_user)
+        resp = self.client.delete("/api/v1/admin/aliases/todelete/")
+        self.assertEqual(resp.status_code, 204)
+        self.assertFalse(Alias.objects.filter(alias_name="todelete").exists())
+        self.assertTrue(AliasTaskQueue.objects.filter(alias_name="todelete", action="remove").exists())
+
+    @patch("apps.subscriptions.views.AliasTaskQueue.objects.create")
+    def test_delete_alias_atomic(self, mock_queue_create):
+        mock_queue_create.side_effect = Exception("queue insert failed")
+        self.client.force_authenticate(user=self.admin_user)
+        resp = self.client.delete("/api/v1/admin/aliases/todelete/")
+        self.assertEqual(resp.status_code, 500)
+        self.assertEqual(resp.data.get("code"), "INTERNAL_SERVER_ERROR")
+        # Ensure rollback happened
+        self.assertTrue(Alias.objects.filter(alias_name="todelete").exists())
