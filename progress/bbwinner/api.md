@@ -40,6 +40,10 @@
     - missing aliases
     - unknown aliases
 
+- `AliasUpdateSerializer`
+  - For admin alias update (PATCH).
+  - Fields: `display_name` (max length 255), `description` (max length 500).
+
 ### (2) Views (`apps/subscriptions/views.py`)
 
 - `AdminAliasListView`
@@ -61,6 +65,19 @@
     - create one `UserTaskQueue` row (`add` / `remove`)
     - update `Alias.user_id` local cache
   - Returns `202 Accepted` with changed aliases and created task IDs.
+
+- `AdminAliasDetailView.update`
+  - Endpoint: `PATCH /api/v1/admin/aliases/<alias_name>/`
+  - Permission: `IsAdminUser`
+  - Uses `AliasUpdateSerializer` to validate length limits.
+  - Updates locally in the PostgreSQL database.
+  - Returns properly formatted 400 (`VALIDATION_ERROR`), 404 (`NOT_FOUND`), and 500 (`INTERNAL_SERVER_ERROR`).
+
+- `AdminAliasDetailView.destroy`
+  - Endpoint: `DELETE /api/v1/admin/aliases/<alias_name>/`
+  - Permission: `IsAdminUser`
+  - Uses `transaction.atomic()` to ensure local alias cache deletion and `AliasTaskQueue` insertion (action: `remove`) are consistent.
+  - Returns 404 if not found, 500 on atomic failure, 204 on success.
 
 ### (3) Throttle (`apps/subscriptions/throttles.py`)
 
@@ -105,6 +122,17 @@
   - invalid payload returns 400
   - queue rows + alias cache updated correctly
   - second PUT within cooldown returns 429
+
+- `AdminAliasPatchApiTest`
+  - returns 404 if alias doesn't exist
+  - successfully updates `display_name` and `description` (multi-field patch)
+  - successfully allows updating a single field
+
+- `AdminAliasDeleteApiTest`
+  - returns 403 for non-admin
+  - returns 404 if alias doesn't exist
+  - successfully deletes from DB and adds `remove` task to queue
+  - atomic failure rolls back DB deletion and returns 500
 
 ### Serializer tests
 

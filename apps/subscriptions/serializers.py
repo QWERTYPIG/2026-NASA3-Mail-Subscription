@@ -11,6 +11,42 @@ class AliasSerializer(serializers.ModelSerializer):
         fields = ["alias_name", "display_name", "description"]
 
 
+class AliasCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Alias
+        fields = ["alias_name", "display_name", "description"]
+        extra_kwargs = {
+            "alias_name": {"required": True, "allow_blank": False},
+            "display_name": {"required": True, "allow_blank": False},
+            "description": {"required": True, "allow_blank": False},
+        }
+
+    def validate_alias_name(self, value):
+        if Alias.objects.filter(alias_name=value).exists():
+            raise serializers.ValidationError("Alias with this name already exists.")
+        return value
+
+
+class AliasUpdateSerializer(serializers.ModelSerializer):
+    """Admin alias update (PATCH)."""
+
+    class Meta:
+        model = Alias
+        fields = ["display_name", "description"]
+        extra_kwargs = {
+            "display_name": {
+                "required": False,
+                "allow_blank": True,
+                "max_length": 255,
+            },
+            "description": {
+                "required": False,
+                "allow_blank": True,
+                "max_length": 500,
+            },
+        }
+
+
 class SubscriptionSerializer(serializers.ModelSerializer):
     """User alias listing with subscription status."""
 

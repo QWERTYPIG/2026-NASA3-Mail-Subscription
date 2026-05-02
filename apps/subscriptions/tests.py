@@ -195,6 +195,182 @@ class AliasListApiTest(TestCase):
         self.assertFalse(workstation_item["is_subscribed"])
 
 
+class AdminAliasCreateApiTest(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.user_model = get_user_model()
+
+        self.normal_user = self.user_model.objects.create_user(
+            username="user1", password="pass", is_staff=False
+        )
+        self.admin_user = self.user_model.objects.create_user(
+            username="admin1", password="pass", is_staff=True
+        )
+
+        Alias.objects.create(
+            alias_name="existing-alias",
+            display_name="Existing Alias",
+            description="An alias that already exists.",
+        )
+
+    def test_create_alias_requires_admin(self):
+        """Only admin users can create aliases."""
+        self.client.force_authenticate(user=self.normal_user)
+        payload = {
+            "alias_name": "new-alias",
+            "display_name": "New Alias",
+            "description": "A new alias.",
+        }
+        resp = self.client.post("/api/v1/admin/aliases/", payload, format="json")
+        self.assertEqual(resp.status_code, 403)
+
+    def test_create_alias_requires_auth(self):
+        """Unauthenticated request should be rejected."""
+        payload = {
+            "alias_name": "new-alias",
+            "display_name": "New Alias",
+            "description": "A new alias.",
+        }
+        resp = self.client.post("/api/v1/admin/aliases/", payload, format="json")
+        self.assertEqual(resp.status_code, 403)
+
+    def test_create_alias_success(self):
+        """Admin can create a new alias."""
+        self.client.force_authenticate(user=self.admin_user)
+        payload = {
+            "alias_name": "new-alias",
+            "display_name": "New Alias",
+            "description": "A new alias for testing.",
+        }
+        resp = self.client.post("/api/v1/admin/aliases/", payload, format="json")
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.data["alias_name"], "new-alias")
+        self.assertEqual(resp.data["display_name"], "New Alias")
+        self.assertEqual(resp.data["description"], "A new alias for testing.")
+        self.assertTrue(Alias.objects.filter(alias_name="new-alias").exists())
+
+        # Verify that a task has been created in the queue
+        self.assertTrue(
+            AliasTaskQueue.objects.filter(
+                alias_name="new-alias", action="add"
+            ).exists()
+        )
+
+    def test_create_alias_missing_fields(self):
+        """Request fails if required fields are missing."""
+        self.client.force_authenticate(user=self.admin_user)
+        payload = {
+            "alias_name": "another-alias",
+            # display_name is missing
+            "description": "A new alias.",
+        }
+        resp = self.client.post("/api/v1/admin/aliases/", payload, format="json")
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("display_name", resp.data)
+
+    def test_create_alias_duplicate_name(self):
+        """Request fails if alias_name already exists."""
+        self.client.force_authenticate(user=self.admin_user)
+        payload = {
+            "alias_name": "existing-alias",
+            "display_name": "Trying to create a duplicate",
+            "description": "This should fail.",
+        }
+        resp = self.client.post("/api/v1/admin/aliases/", payload, format="json")
+        self.assertEqual(resp.status_code, 409)
+        self.assertEqual(resp.data["code"], "CONFLICT")
+
+    def test_create_alias_invalid_name_format(self):
+        """Request fails if alias_name has invalid characters."""
+        self.client.force_authenticate(user=self.admin_user)
+        payload = {
+            "alias_name": "Invalid Name",
+            "display_name": "Invalid Alias",
+            "description": "This should fail due to invalid name format.",
+        }
+        resp = self.client.post("/api/v1/admin/aliases/", payload, format="json")
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("alias_name", resp.data)
+
+    @patch("apps.subscriptions.views.AliasTaskQueue.objects.create")
+    def test_create_alias_rolls_back_when_queue_insert_fails(self, mock_queue_create):
+        """Alias creation and queue insert should be atomic."""
+        mock_queue_create.side_effect = Exception("queue insert failed")
+
+        self.client.force_authenticate(user=self.admin_user)
+        payload = {
+            "alias_name": "atomic-alias",
+            "display_name": "Atomic Alias",
+            "description": "Should rollback on queue failure",
+        }
+
+        resp = self.client.post("/api/v1/admin/aliases/", payload, format="json")
+        self.assertEqual(resp.status_code, 500)
+        self.assertEqual(resp.data["code"], "INTERNAL_SERVER_ERROR")
+        self.assertFalse(Alias.objects.filter(alias_name="atomic-alias").exists())
+
+
+class AdminAliasPatchApiTest(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.user_model = get_user_model()
+
+        self.admin_user = self.user_model.objects.create_user(
+            username="admin1", password="pass", is_staff=True
+        )
+
+        Alias.objects.create(
+            alias_name="workstation",
+            display_name="Workstation",
+            description="Lab announcements",
+        )
+
+    def test_patch_alias_not_found(self):
+        self.client.force_authenticate(user=self.admin_user)
+        payload = {"display_name": "New Name"}
+        resp = self.client.patch(
+            "/api/v1/admin/aliases/not-exist/",
+            payload,
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 404)
+        self.assertEqual(resp.data.get("code"), "NOT_FOUND")
+
+    def test_patch_alias_success(self):
+        self.client.force_authenticate(user=self.admin_user)
+        payload = {
+            "display_name": "New Workstation",
+            "description": "Updated announcements",
+        }
+        resp = self.client.patch(
+            "/api/v1/admin/aliases/workstation/",
+            payload,
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data["display_name"], "New Workstation")
+        self.assertEqual(resp.data["description"], "Updated announcements")
+
+        alias = Alias.objects.get(alias_name="workstation")
+        self.assertEqual(alias.display_name, "New Workstation")
+        self.assertEqual(alias.description, "Updated announcements")
+
+    def test_patch_alias_single_field(self):
+        self.client.force_authenticate(user=self.admin_user)
+        payload = {"display_name": "Workstation Lite"}
+        resp = self.client.patch(
+            "/api/v1/admin/aliases/workstation/",
+            payload,
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data["display_name"], "Workstation Lite")
+
+        alias = Alias.objects.get(alias_name="workstation")
+        self.assertEqual(alias.display_name, "Workstation Lite")
+        self.assertEqual(alias.description, "Lab announcements")
+        
+
 class UserSubscriptionUpdateSerializerTest(TestCase):
     def setUp(self):
         Alias.objects.create(alias_name="activities", display_name="Activities")
@@ -335,3 +511,237 @@ class ConnectAlertTest(TestCase):
         from apps.subscriptions.tasks import _connect
         _connect()
         mock_alert.assert_not_called()
+
+class AdminAliasDeleteApiTest(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.user_model = get_user_model()
+
+        self.normal_user = self.user_model.objects.create_user(
+            username="user1", password="pass", is_staff=False
+        )
+        self.admin_user = self.user_model.objects.create_user(
+            username="admin1", password="pass", is_staff=True
+        )
+
+        Alias.objects.create(
+            alias_name="todelete",
+            display_name="To Delete",
+            description="Will be deleted",
+        )
+
+    def test_delete_requires_admin(self):
+        self.client.force_authenticate(user=self.normal_user)
+        resp = self.client.delete("/api/v1/admin/aliases/todelete/")
+        self.assertEqual(resp.status_code, 403)
+
+    def test_delete_alias_not_found(self):
+        self.client.force_authenticate(user=self.admin_user)
+        resp = self.client.delete("/api/v1/admin/aliases/not-exist/")
+        self.assertEqual(resp.status_code, 404)
+        self.assertEqual(resp.data.get("code"), "NOT_FOUND")
+
+    def test_delete_alias_success(self):
+        self.client.force_authenticate(user=self.admin_user)
+        resp = self.client.delete("/api/v1/admin/aliases/todelete/")
+        self.assertEqual(resp.status_code, 204)
+        self.assertFalse(Alias.objects.filter(alias_name="todelete").exists())
+        self.assertTrue(AliasTaskQueue.objects.filter(alias_name="todelete", action="remove").exists())
+
+    @patch("apps.subscriptions.views.AliasTaskQueue.objects.create")
+    def test_delete_alias_atomic(self, mock_queue_create):
+        mock_queue_create.side_effect = Exception("queue insert failed")
+        self.client.force_authenticate(user=self.admin_user)
+        resp = self.client.delete("/api/v1/admin/aliases/todelete/")
+        self.assertEqual(resp.status_code, 500)
+        self.assertEqual(resp.data.get("code"), "INTERNAL_SERVER_ERROR")
+        # Ensure rollback happened
+        self.assertTrue(Alias.objects.filter(alias_name="todelete").exists())
+
+class AdminAliasUserListApiTest(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.user_model = get_user_model()
+
+        self.normal_user = self.user_model.objects.create_user(
+            username="user1", password="pass", is_staff=False
+        )
+        self.admin_user = self.user_model.objects.create_user(
+            username="admin1", password="pass", is_staff=True
+        )
+
+        Alias.objects.create(
+            alias_name="toview",
+            display_name="To View",
+            user_id=["b12345678", "b00000000"],
+        )
+
+    def test_requires_auth(self):
+        resp = self.client.get("/api/v1/admin/aliases/toview/users/")
+        self.assertEqual(resp.status_code, 403)
+
+    def test_requires_admin(self):
+        self.client.force_authenticate(user=self.normal_user)
+        resp = self.client.get("/api/v1/admin/aliases/toview/users/")
+        self.assertEqual(resp.status_code, 403)
+
+    def test_success_returns_user_ids(self):
+        self.client.force_authenticate(user=self.admin_user)
+        resp = self.client.get("/api/v1/admin/aliases/toview/users/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data, ["b12345678", "b00000000"])
+
+    def test_alias_not_found(self):
+        self.client.force_authenticate(user=self.admin_user)
+        resp = self.client.get("/api/v1/admin/aliases/not-exist/users/")
+        self.assertEqual(resp.status_code, 404)
+        self.assertEqual(resp.data.get("code"), "NOT_FOUND")
+
+    @patch("apps.subscriptions.views.Alias.objects.get")
+    def test_internal_error(self, mock_get):
+        mock_get.side_effect = Exception("DB error")
+        self.client.force_authenticate(user=self.admin_user)
+        resp = self.client.get("/api/v1/admin/aliases/toview/users/")
+        self.assertEqual(resp.status_code, 500)
+        self.assertEqual(resp.data.get("code"), "INTERNAL_SERVER_ERROR")
+
+class AdminAliasUserAddApiTest(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.user_model = get_user_model()
+
+        self.normal_user = self.user_model.objects.create_user(
+            username="user1", password="pass", is_staff=False
+        )
+        self.admin_user = self.user_model.objects.create_user(
+            username="admin1", password="pass", is_staff=True
+        )
+
+        Alias.objects.create(
+            alias_name="toadd",
+            display_name="To Add",
+            user_id=["b12345678"],
+        )
+
+    def test_add_requires_auth(self):
+        resp = self.client.post("/api/v1/admin/aliases/toadd/users/", {"uid": "b00000000"}, format="json")
+        self.assertEqual(resp.status_code, 403)
+
+    def test_add_requires_admin(self):
+        self.client.force_authenticate(user=self.normal_user)
+        resp = self.client.post("/api/v1/admin/aliases/toadd/users/", {"uid": "b00000000"}, format="json")
+        self.assertEqual(resp.status_code, 403)
+
+    def test_add_success(self):
+        self.client.force_authenticate(user=self.admin_user)
+        resp = self.client.post("/api/v1/admin/aliases/toadd/users/", {"uid": "b00000000"}, format="json")
+        self.assertEqual(resp.status_code, 200)
+
+        alias = Alias.objects.get(alias_name="toadd")
+        self.assertIn("b00000000", alias.user_id)
+
+        task = UserTaskQueue.objects.filter(alias_name="toadd", user_uid="b00000000", action="add").exists()
+        self.assertTrue(task)
+
+    def test_add_duplicate(self):
+        self.client.force_authenticate(user=self.admin_user)
+        resp = self.client.post("/api/v1/admin/aliases/toadd/users/", {"uid": "b12345678"}, format="json")
+        self.assertEqual(resp.status_code, 200)
+
+        alias = Alias.objects.get(alias_name="toadd")
+        self.assertEqual(alias.user_id.count("b12345678"), 1)
+
+        task = UserTaskQueue.objects.filter(alias_name="toadd", user_uid="b12345678", action="add").exists()
+        self.assertFalse(task)  # Shouldn't create task if already exists
+
+    def test_invalid_uid_format(self):
+        self.client.force_authenticate(user=self.admin_user)
+        resp = self.client.post("/api/v1/admin/aliases/toadd/users/", {"uid": "invalid"}, format="json")
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.data["code"], "VALIDATION_ERROR")
+        self.assertIn("uid", resp.data["details"])
+
+    def test_missing_alias(self):
+        self.client.force_authenticate(user=self.admin_user)
+        resp = self.client.post("/api/v1/admin/aliases/notexist/users/", {"uid": "b00000000"}, format="json")
+        self.assertEqual(resp.status_code, 404)
+        self.assertEqual(resp.data["code"], "NOT_FOUND")
+
+    @patch("apps.subscriptions.views.Alias.objects.select_for_update")
+    def test_internal_error(self, mock_select):
+        mock_select.side_effect = Exception("DB error")
+        self.client.force_authenticate(user=self.admin_user)
+        resp = self.client.post("/api/v1/admin/aliases/toadd/users/", {"uid": "b00000000"}, format="json")
+        self.assertEqual(resp.status_code, 500)
+        self.assertEqual(resp.data["code"], "INTERNAL_SERVER_ERROR")
+
+class AdminAliasUserDeleteApiTest(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.user_model = get_user_model()
+
+        self.normal_user = self.user_model.objects.create_user(
+            username="user1", password="pass", is_staff=False
+        )
+        self.admin_user = self.user_model.objects.create_user(
+            username="admin1", password="pass", is_staff=True
+        )
+
+        Alias.objects.create(
+            alias_name="toremove",
+            display_name="To Remove",
+            user_id=["b12345678", "b98765432"],
+        )
+
+    def test_delete_requires_auth(self):
+        resp = self.client.delete("/api/v1/admin/aliases/toremove/users/b12345678/")
+        self.assertEqual(resp.status_code, 403)
+
+    def test_delete_requires_admin(self):
+        self.client.force_authenticate(user=self.normal_user)
+        resp = self.client.delete("/api/v1/admin/aliases/toremove/users/b12345678/")
+        self.assertEqual(resp.status_code, 403)
+
+    def test_delete_success(self):
+        self.client.force_authenticate(user=self.admin_user)
+        resp = self.client.delete("/api/v1/admin/aliases/toremove/users/b12345678/")
+        self.assertEqual(resp.status_code, 204)
+
+        alias = Alias.objects.get(alias_name="toremove")
+        self.assertNotIn("b12345678", alias.user_id)
+        self.assertIn("b98765432", alias.user_id)
+
+        task = UserTaskQueue.objects.filter(alias_name="toremove", user_uid="b12345678", action="remove").exists()
+        self.assertTrue(task)
+
+    def test_delete_not_in_alias(self):
+        self.client.force_authenticate(user=self.admin_user)
+        resp = self.client.delete("/api/v1/admin/aliases/toremove/users/b00000000/")
+        self.assertEqual(resp.status_code, 404)
+        self.assertEqual(resp.data["code"], "NOT_FOUND")
+
+        alias = Alias.objects.get(alias_name="toremove")
+        self.assertEqual(len(alias.user_id), 2)  # Remains unchanged
+
+        task = UserTaskQueue.objects.filter(alias_name="toremove", user_uid="b00000000", action="remove").exists()
+        self.assertFalse(task)  # Shouldn't create task if user wasn't subscribed
+
+    def test_invalid_uid_format(self):
+        self.client.force_authenticate(user=self.admin_user)
+        resp = self.client.delete("/api/v1/admin/aliases/toremove/users/invalid/")
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.data["code"], "VALIDATION_ERROR")
+
+    def test_missing_alias(self):
+        self.client.force_authenticate(user=self.admin_user)
+        resp = self.client.delete("/api/v1/admin/aliases/notexist/users/b00000000/")
+        self.assertEqual(resp.status_code, 404)
+        self.assertEqual(resp.data["code"], "NOT_FOUND")
+
+    @patch("apps.subscriptions.views.Alias.objects.select_for_update")
+    def test_internal_error(self, mock_select):
+        mock_select.side_effect = Exception("DB error")
+        self.client.force_authenticate(user=self.admin_user)
+        resp = self.client.delete("/api/v1/admin/aliases/toremove/users/b12345678/")
+        self.assertEqual(resp.status_code, 500)
+        self.assertEqual(resp.data["code"], "INTERNAL_SERVER_ERROR")
