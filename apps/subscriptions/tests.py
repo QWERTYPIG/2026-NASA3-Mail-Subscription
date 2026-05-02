@@ -674,3 +674,74 @@ class AdminAliasUserAddApiTest(TestCase):
         resp = self.client.post("/api/v1/admin/aliases/toadd/users/", {"uid": "b00000000"}, format="json")
         self.assertEqual(resp.status_code, 500)
         self.assertEqual(resp.data["code"], "INTERNAL_SERVER_ERROR")
+
+class AdminAliasUserDeleteApiTest(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.user_model = get_user_model()
+
+        self.normal_user = self.user_model.objects.create_user(
+            username="user1", password="pass", is_staff=False
+        )
+        self.admin_user = self.user_model.objects.create_user(
+            username="admin1", password="pass", is_staff=True
+        )
+
+        Alias.objects.create(
+            alias_name="toremove",
+            display_name="To Remove",
+            user_id=["b12345678", "b98765432"],
+        )
+
+    def test_delete_requires_auth(self):
+        resp = self.client.delete("/api/v1/admin/aliases/toremove/users/b12345678/")
+        self.assertEqual(resp.status_code, 403)
+
+    def test_delete_requires_admin(self):
+        self.client.force_authenticate(user=self.normal_user)
+        resp = self.client.delete("/api/v1/admin/aliases/toremove/users/b12345678/")
+        self.assertEqual(resp.status_code, 403)
+
+    def test_delete_success(self):
+        self.client.force_authenticate(user=self.admin_user)
+        resp = self.client.delete("/api/v1/admin/aliases/toremove/users/b12345678/")
+        self.assertEqual(resp.status_code, 204)
+
+        alias = Alias.objects.get(alias_name="toremove")
+        self.assertNotIn("b12345678", alias.user_id)
+        self.assertIn("b98765432", alias.user_id)
+
+        task = UserTaskQueue.objects.filter(alias_name="toremove", user_uid="b12345678", action="remove").exists()
+        self.assertTrue(task)
+
+    def test_delete_not_in_alias(self):
+        self.client.force_authenticate(user=self.admin_user)
+        resp = self.client.delete("/api/v1/admin/aliases/toremove/users/b00000000/")
+        self.assertEqual(resp.status_code, 404)
+        self.assertEqual(resp.data["code"], "NOT_FOUND")
+
+        alias = Alias.objects.get(alias_name="toremove")
+        self.assertEqual(len(alias.user_id), 2)  # Remains unchanged
+
+        task = UserTaskQueue.objects.filter(alias_name="toremove", user_uid="b00000000", action="remove").exists()
+        self.assertFalse(task)  # Shouldn't create task if user wasn't subscribed
+
+    def test_invalid_uid_format(self):
+        self.client.force_authenticate(user=self.admin_user)
+        resp = self.client.delete("/api/v1/admin/aliases/toremove/users/invalid/")
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.data["code"], "VALIDATION_ERROR")
+
+    def test_missing_alias(self):
+        self.client.force_authenticate(user=self.admin_user)
+        resp = self.client.delete("/api/v1/admin/aliases/notexist/users/b00000000/")
+        self.assertEqual(resp.status_code, 404)
+        self.assertEqual(resp.data["code"], "NOT_FOUND")
+
+    @patch("apps.subscriptions.views.Alias.objects.select_for_update")
+    def test_internal_error(self, mock_select):
+        mock_select.side_effect = Exception("DB error")
+        self.client.force_authenticate(user=self.admin_user)
+        resp = self.client.delete("/api/v1/admin/aliases/toremove/users/b12345678/")
+        self.assertEqual(resp.status_code, 500)
+        self.assertEqual(resp.data["code"], "INTERNAL_SERVER_ERROR")

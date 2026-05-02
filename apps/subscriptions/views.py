@@ -90,6 +90,63 @@ class AdminAliasUserListView(APIView):
         return Response(status=status.HTTP_200_OK)
 
 
+class AdminAliasUserDetailView(APIView):
+    permission_classes = [IsAdminUser]
+
+    def delete(self, request, alias_name, uid):
+        if not uid or len(uid) != 9:
+            return Response(
+                {
+                    "error": "Validation failed",
+                    "code": "VALIDATION_ERROR",
+                    "details": {"uid": ["Ensure this field has exactly 9 characters."]},
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            with transaction.atomic():
+                try:
+                    # Select for update to prevent concurrent edits
+                    alias = Alias.objects.select_for_update().get(alias_name=alias_name)
+                except Alias.DoesNotExist:
+                    return Response(
+                        {
+                            "error": "The requested resource was not found.",
+                            "code": "NOT_FOUND",
+                        },
+                        status=status.HTTP_404_NOT_FOUND,
+                    )
+
+                if uid in alias.user_id:
+                    alias.user_id.remove(uid)
+                    alias.save(update_fields=["user_id"])
+                    
+                    UserTaskQueue.objects.create(
+                        alias_name=alias.alias_name,
+                        user_uid=uid,
+                        action="remove",
+                    )
+                else:
+                    return Response(
+                        {
+                            "error": "User not found in this alias.",
+                            "code": "NOT_FOUND",
+                        },
+                        status=status.HTTP_404_NOT_FOUND,
+                    )
+        except Exception:
+            return Response(
+                {
+                    "error": "An unexpected error occurred. Please contact the administrator.",
+                    "code": "INTERNAL_SERVER_ERROR",
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
 class AdminAliasListView(generics.ListCreateAPIView):
     permission_classes = [IsAdminUser]
     queryset = Alias.objects.all().order_by("alias_name")
