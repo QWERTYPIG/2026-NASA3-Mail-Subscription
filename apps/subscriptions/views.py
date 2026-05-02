@@ -16,6 +16,7 @@ from .serializers import (
     UserSubscriptionUpdateSerializer,
 )
 from .throttles import UserSubscriptionCooldownThrottle
+from .utils import not_found_response, internal_error_response, validation_error_response, conflict_response
 
 
 class AdminAliasUserListView(APIView):
@@ -25,35 +26,16 @@ class AdminAliasUserListView(APIView):
         try:
             alias = Alias.objects.get(alias_name=alias_name)
         except Alias.DoesNotExist:
-            return Response(
-                {
-                    "error": "The requested resource was not found.",
-                    "code": "NOT_FOUND",
-                },
-                status=status.HTTP_404_NOT_FOUND,
-            )
+            return not_found_response()
         except Exception:
-            return Response(
-                {
-                    "error": "An unexpected error occurred. Please contact the administrator.",
-                    "code": "INTERNAL_SERVER_ERROR",
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+            return internal_error_response()
         return Response(alias.user_id, status=status.HTTP_200_OK)
 
     def post(self, request, alias_name):
         uid = request.data.get("uid")
         
         if not uid or len(uid) != 9:
-            return Response(
-                {
-                    "error": "Validation failed",
-                    "code": "VALIDATION_ERROR",
-                    "details": {"uid": ["Ensure this field has exactly 9 characters."]},
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return validation_error_response({"uid": ["Ensure this field has exactly 9 characters."]})
 
         try:
             with transaction.atomic():
@@ -61,13 +43,7 @@ class AdminAliasUserListView(APIView):
                     # Select for update to prevent concurrent race conditions
                     alias = Alias.objects.select_for_update().get(alias_name=alias_name)
                 except Alias.DoesNotExist:
-                    return Response(
-                        {
-                            "error": "The requested resource was not found.",
-                            "code": "NOT_FOUND",
-                        },
-                        status=status.HTTP_404_NOT_FOUND,
-                    )
+                    return not_found_response()
 
                 if uid not in alias.user_id:
                     alias.user_id.append(uid)
@@ -79,13 +55,7 @@ class AdminAliasUserListView(APIView):
                         action="add",
                     )
         except Exception:
-            return Response(
-                {
-                    "error": "An unexpected error occurred. Please contact the administrator.",
-                    "code": "INTERNAL_SERVER_ERROR",
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+            return internal_error_response()
 
         return Response(status=status.HTTP_200_OK)
 
@@ -95,14 +65,7 @@ class AdminAliasUserDetailView(APIView):
 
     def delete(self, request, alias_name, uid):
         if not uid or len(uid) != 9:
-            return Response(
-                {
-                    "error": "Validation failed",
-                    "code": "VALIDATION_ERROR",
-                    "details": {"uid": ["Ensure this field has exactly 9 characters."]},
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return validation_error_response({"uid": ["Ensure this field has exactly 9 characters."]})
 
         try:
             with transaction.atomic():
@@ -110,13 +73,7 @@ class AdminAliasUserDetailView(APIView):
                     # Select for update to prevent concurrent edits
                     alias = Alias.objects.select_for_update().get(alias_name=alias_name)
                 except Alias.DoesNotExist:
-                    return Response(
-                        {
-                            "error": "The requested resource was not found.",
-                            "code": "NOT_FOUND",
-                        },
-                        status=status.HTTP_404_NOT_FOUND,
-                    )
+                    return not_found_response()
 
                 if uid in alias.user_id:
                     alias.user_id.remove(uid)
@@ -128,21 +85,9 @@ class AdminAliasUserDetailView(APIView):
                         action="remove",
                     )
                 else:
-                    return Response(
-                        {
-                            "error": "User not found in this alias.",
-                            "code": "NOT_FOUND",
-                        },
-                        status=status.HTTP_404_NOT_FOUND,
-                    )
+                    return not_found_response("User not found in this alias.")
         except Exception:
-            return Response(
-                {
-                    "error": "An unexpected error occurred. Please contact the administrator.",
-                    "code": "INTERNAL_SERVER_ERROR",
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+            return internal_error_response()
 
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -159,14 +104,7 @@ class AdminAliasListView(generics.ListCreateAPIView):
     def create(self, request, *args, **kwargs):
         alias_name = request.data.get("alias_name")
         if alias_name and Alias.objects.filter(alias_name=alias_name).exists():
-            return Response(
-                {
-                    "error": "Alias name already exists.",
-                    "code": "CONFLICT",
-                    "details": {"existing_alias": alias_name},
-                },
-                status=status.HTTP_409_CONFLICT,
-            )
+            return conflict_response("Alias name already exists.", {"existing_alias": alias_name})
 
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -178,13 +116,7 @@ class AdminAliasListView(generics.ListCreateAPIView):
                     action="add",
                 )
         except Exception:
-            return Response(
-                {
-                    "error": "An unexpected error occurred. Please contact the administrator.",
-                    "code": "INTERNAL_SERVER_ERROR",
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+            return internal_error_response()
 
         headers = self.get_success_headers(serializer.data)
         return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
@@ -206,35 +138,16 @@ class AdminAliasDetailView(generics.RetrieveUpdateDestroyAPIView):
         try:
             instance = self.get_object()
         except Http404:
-            return Response(
-                {
-                    "error": "The requested resource was not found.",
-                    "code": "NOT_FOUND",
-                },
-                status=status.HTTP_404_NOT_FOUND,
-            )
+            return not_found_response()
 
         serializer = self.get_serializer(instance, data=request.data, partial=partial)
         if not serializer.is_valid():
-            return Response(
-                {
-                    "error": "Validation failed",
-                    "code": "VALIDATION_ERROR",
-                    "details": serializer.errors,
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return validation_error_response(serializer.errors)
 
         try:
             self.perform_update(serializer)
         except Exception:
-            return Response(
-                {
-                    "error": "An unexpected error occurred. Please contact the administrator.",
-                    "code": "INTERNAL_SERVER_ERROR",
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+            return internal_error_response()
 
         return Response(serializer.data)
 
@@ -242,25 +155,13 @@ class AdminAliasDetailView(generics.RetrieveUpdateDestroyAPIView):
         try:
             instance = self.get_object()
         except Http404:
-            return Response(
-                {
-                    "error": "The requested resource was not found.",
-                    "code": "NOT_FOUND",
-                },
-                status=status.HTTP_404_NOT_FOUND,
-            )
+            return not_found_response()
 
         try:
             with transaction.atomic():
                 self.perform_destroy(instance)
         except Exception:
-            return Response(
-                {
-                    "error": "An unexpected error occurred. Please contact the administrator.",
-                    "code": "INTERNAL_SERVER_ERROR",
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+            return internal_error_response()
 
         return Response(status=status.HTTP_204_NO_CONTENT)
 
