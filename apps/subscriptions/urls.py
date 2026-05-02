@@ -1,6 +1,6 @@
 from django.urls import path
 
-from .views import AdminAliasListView, AdminAliasDetailView, UserSubscriptionListView
+from .views import AdminAliasListView, AdminAliasDetailView, UserSubscriptionListView, AdminAliasUserListView
 
 
 urlpatterns = [
@@ -9,6 +9,11 @@ urlpatterns = [
         "admin/aliases/<str:alias_name>/",
         AdminAliasDetailView.as_view(),
         name="admin-alias-detail",
+    ),
+    path(
+        "admin/aliases/<str:alias_name>/users/",
+        AdminAliasUserListView.as_view(),
+        name="admin-alias-user-list",
     ),
     path(
         "user/subscriptions/",

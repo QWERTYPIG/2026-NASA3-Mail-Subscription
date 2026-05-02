@@ -557,3 +557,50 @@ class AdminAliasDeleteApiTest(TestCase):
         self.assertEqual(resp.data.get("code"), "INTERNAL_SERVER_ERROR")
         # Ensure rollback happened
         self.assertTrue(Alias.objects.filter(alias_name="todelete").exists())
+
+class AdminAliasUserListApiTest(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.user_model = get_user_model()
+
+        self.normal_user = self.user_model.objects.create_user(
+            username="user1", password="pass", is_staff=False
+        )
+        self.admin_user = self.user_model.objects.create_user(
+            username="admin1", password="pass", is_staff=True
+        )
+
+        Alias.objects.create(
+            alias_name="toview",
+            display_name="To View",
+            user_id=["b12345678", "b00000000"],
+        )
+
+    def test_requires_auth(self):
+        resp = self.client.get("/api/v1/admin/aliases/toview/users/")
+        self.assertEqual(resp.status_code, 403)
+
+    def test_requires_admin(self):
+        self.client.force_authenticate(user=self.normal_user)
+        resp = self.client.get("/api/v1/admin/aliases/toview/users/")
+        self.assertEqual(resp.status_code, 403)
+
+    def test_success_returns_user_ids(self):
+        self.client.force_authenticate(user=self.admin_user)
+        resp = self.client.get("/api/v1/admin/aliases/toview/users/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data, ["b12345678", "b00000000"])
+
+    def test_alias_not_found(self):
+        self.client.force_authenticate(user=self.admin_user)
+        resp = self.client.get("/api/v1/admin/aliases/not-exist/users/")
+        self.assertEqual(resp.status_code, 404)
+        self.assertEqual(resp.data.get("code"), "NOT_FOUND")
+
+    @patch("apps.subscriptions.views.Alias.objects.get")
+    def test_internal_error(self, mock_get):
+        mock_get.side_effect = Exception("DB error")
+        self.client.force_authenticate(user=self.admin_user)
+        resp = self.client.get("/api/v1/admin/aliases/toview/users/")
+        self.assertEqual(resp.status_code, 500)
+        self.assertEqual(resp.data.get("code"), "INTERNAL_SERVER_ERROR")

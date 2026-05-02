@@ -18,6 +18,31 @@ from .serializers import (
 from .throttles import UserSubscriptionCooldownThrottle
 
 
+class AdminAliasUserListView(APIView):
+    permission_classes = [IsAdminUser]
+
+    def get(self, request, alias_name):
+        try:
+            alias = Alias.objects.get(alias_name=alias_name)
+        except Alias.DoesNotExist:
+            return Response(
+                {
+                    "error": "The requested resource was not found.",
+                    "code": "NOT_FOUND",
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except Exception:
+            return Response(
+                {
+                    "error": "An unexpected error occurred. Please contact the administrator.",
+                    "code": "INTERNAL_SERVER_ERROR",
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+        return Response(alias.user_id, status=status.HTTP_200_OK)
+
+
 class AdminAliasListView(generics.ListCreateAPIView):
     permission_classes = [IsAdminUser]
     queryset = Alias.objects.all().order_by("alias_name")
