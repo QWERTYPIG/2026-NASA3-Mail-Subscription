@@ -39,9 +39,9 @@ OP_CYCLE = [
     (MODIFY_DELETE, MEMBER_994),
 ]
 
-WRITE_OPS = 200       # total write ops to simulate the flush
-READ_INTERVAL = 0.2   # seconds between each ldapsearch
-BASELINE_READS = 20   # ldapsearch samples before writes start
+WRITE_OPS = 2000  # total write ops to simulate the flush
+READ_INTERVAL = 0.2  # seconds between each ldapsearch
+BASELINE_READS = 200  # ldapsearch samples before writes start
 
 
 def connect() -> Connection:
@@ -164,7 +164,9 @@ def main() -> None:
     load_p50 = sorted(read_results)[len(read_results) // 2]
     delta = load_p50 - baseline_p50
     # A delta under 50ms is generally acceptable for a LAN LDAP server
-    print(f"\n  p50 delta = {delta:+.1f} ms  ({'acceptable' if abs(delta) < 50 else 'significant impact'})")
+    print(
+        f"\n  p50 delta = {delta:+.1f} ms  ({'acceptable' if abs(delta) < 50 else 'significant impact'})"
+    )
 
     cleanup_members(write_conn)
     write_conn.unbind()

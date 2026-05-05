@@ -33,7 +33,7 @@ OP_CYCLE = [
     (MODIFY_DELETE, MEMBER_994),
 ]
 
-QUEUE_SIZES = [10, 50, 100, 200]
+QUEUE_SIZES = [10, 50, 100, 200, 1000, 5000, 10000, 20000, 50000]
 LOCK_TTL_SECONDS = 300  # from tasks.py — flush must finish within this
 
 
@@ -88,7 +88,9 @@ def main() -> None:
     conn = connect()
     setup(conn)
 
-    print(f"\n{'N tasks':>10}  {'Total time':>12}  {'ops/sec':>10}  {'vs lock TTL':>12}")
+    print(
+        f"\n{'N tasks':>10}  {'Total time':>12}  {'ops/sec':>10}  {'vs lock TTL':>12}"
+    )
     print("-" * 52)
 
     for n in QUEUE_SIZES:
