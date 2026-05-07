@@ -8,10 +8,13 @@ export default function AliasPage() {
   const [loading, setLoading] = useState(true);
   const [processingId, setProcessingId] = useState(null); // 用於顯示特定按鈕的載入狀態
 
+  const isNormalUser = currentUser?.role !== 'admin';
+
   // 1. 取得別名清單與訂閱狀態
   const fetchAliases = async () => {
     try {
-      const res = await api.get('/user/subscriptions/');
+      const endpoint = isNormalUser ? '/user/subscriptions/' : '/admin/aliases/';
+      const res = await api.get('endpoint');
       setAliases(res.data);
     } catch {
       toast.error("無法載入訂閱清單");
@@ -26,6 +29,8 @@ export default function AliasPage() {
 
   // 2. 處理訂閱切換 (Toggle)
   const handleToggle = async (aliasName, currentStatus) => {
+    if (!isNormalUser)return;
+
     setProcessingId(aliasName);
     const newStatus = !currentStatus;
     

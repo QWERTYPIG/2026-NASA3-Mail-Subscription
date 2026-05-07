@@ -148,7 +148,7 @@ export default function App() {
                       <Element />
                     ) : (
                       <ProtectedRoute user={currentUser}>
-                        <Element />
+                        <Element currentUser={currentUser} />
                       </ProtectedRoute>
                     )
                   } 
