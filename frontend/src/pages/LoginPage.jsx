@@ -28,7 +28,8 @@ export default function LoginPage({ currentUser, onLoginSuccess }) {
         // 通知 App.jsx 更新全域狀態
         onLoginSuccess({
           username: res.data.username,
-          role: res.data.is_staff ? 'admin' : 'user'
+          role: res.data.is_staff ? 'admin' : 'user',
+          is_admin: res.data.is_staff
         });
         navigate('/');
       }

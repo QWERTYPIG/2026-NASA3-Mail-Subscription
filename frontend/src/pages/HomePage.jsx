@@ -1,20 +1,22 @@
 import React, { useState, useEffect } from 'react';
-import api from '../api/axios'; // 確保你使用了帶有 withCredentials 的 axios 實體
+import api from '../api/axios'; 
 import { toast } from 'react-hot-toast';
 import { Mail, CheckCircle2, Circle, Loader2, Info } from 'lucide-react';
 
-export default function AliasPage() {
+// 1. 接收 currentUser prop
+export default function AliasPage({ currentUser }) {
   const [aliases, setAliases] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [processingId, setProcessingId] = useState(null); // 用於顯示特定按鈕的載入狀態
+  const [processingId, setProcessingId] = useState(null); 
+  
+  // 判斷是否為一般使用者 (只有一般使用者可以訂閱)
+  const isNormalUser = !currentUser?.is_admin;
 
-  const isNormalUser = currentUser?.role !== 'admin';
-
-  // 1. 取得別名清單與訂閱狀態
   const fetchAliases = async () => {
     try {
+      // 如果是 Admin，可能需要呼叫 admin endpoints，但為了顯示列表，我們先保留原本的 API，或者依賴後端的權限設計
       const endpoint = isNormalUser ? '/user/subscriptions/' : '/admin/aliases/';
-      const res = await api.get('endpoint');
+      const res = await api.get(endpoint);
       setAliases(res.data);
     } catch {
       toast.error("無法載入訂閱清單");
@@ -25,12 +27,11 @@ export default function AliasPage() {
 
   useEffect(() => {
     fetchAliases();
-  }, []);
+  }, [isNormalUser]); // 加入 dependency
 
-  // 2. 處理訂閱切換 (Toggle)
   const handleToggle = async (aliasName, currentStatus) => {
-    if (!isNormalUser)return;
-
+    if (!isNormalUser) return; // 雙重防護：Admin 無法觸發
+    
     setProcessingId(aliasName);
     const newStatus = !currentStatus;
     
@@ -42,7 +43,6 @@ export default function AliasPage() {
     try {
       await api.put('/user/subscriptions/', payload);
       
-      // Optimistic update using alias_name
       setAliases(prev => prev.map(a => 
         a.alias_name === aliasName ? { ...a, is_subscribed: newStatus } : a
       ));
@@ -72,10 +72,12 @@ export default function AliasPage() {
     <div className="max-w-4xl mx-auto">
       <header className="mb-8">
         <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-          <Mail className="text-indigo-600" /> 郵件別名訂閱管理
+          <Mail className="text-indigo-600" /> {isNormalUser ? "郵件別名訂閱管理" : "郵件別名總覽"}
         </h1>
         <p className="text-slate-500 mt-1">
-          在此管理您感興趣的郵件群組，訂閱後您將會收到發往該別名的郵件。
+          {isNormalUser 
+            ? "在此管理您感興趣的郵件群組，訂閱後您將會收到發往該別名的郵件。"
+            : "身為管理員，您可以在此查看系統中所有的郵件別名。請至「別名系統管理」進行修改。"}
         </p>
       </header>
 
@@ -89,19 +91,21 @@ export default function AliasPage() {
             <div 
               key={alias.alias_name} 
               className={`group bg-white p-5 rounded-xl border transition-all duration-200 flex items-center justify-between ${
-                alias.is_subscribed 
+                (isNormalUser && alias.is_subscribed) 
                 ? 'border-indigo-100 shadow-sm ring-1 ring-indigo-50' 
                 : 'border-slate-200 hover:border-slate-300 shadow-none'
               }`}
             >
               <div className="flex items-start gap-4">
-                <div className={`mt-1 p-2 rounded-lg ${alias.is_subscribed ? 'bg-indigo-50 text-indigo-600' : 'bg-slate-50 text-slate-400'}`}>
-                  {alias.is_subscribed ? <CheckCircle2 size={20} /> : <Circle size={20} />}
+                <div className={`mt-1 p-2 rounded-lg ${
+                  (isNormalUser && alias.is_subscribed) ? 'bg-indigo-50 text-indigo-600' : 'bg-slate-50 text-slate-400'
+                }`}>
+                  {/* 如果是 Admin，只顯示單純的 Mail icon；一般使用者顯示打勾或圓圈 */}
+                  {!isNormalUser ? <Mail size={20} /> : (alias.is_subscribed ? <CheckCircle2 size={20} /> : <Circle size={20} />)}
                 </div>
                 <div>
-                  {/*change alias_name to desplay_name later*/}
                   <h3 className="font-bold text-slate-800 text-lg uppercase tracking-tight">
-                    {alias.alias_name}
+                    {alias.display_name || alias.alias_name} {/* 更新為 display_name */}
                   </h3>
                   <p className="text-slate-500 text-sm mt-0.5 leading-relaxed">
                     {alias.description || "尚無描述"}
@@ -109,44 +113,49 @@ export default function AliasPage() {
                 </div>
               </div>
 
-              <div className="flex items-center gap-4">
-                {/* 使用者看到的 Toggle 按鈕 */}
-                <button
-                  onClick={() => handleToggle(alias.alias_name, alias.is_subscribed)}
-                  disabled={processingId === alias.alias_name}
-                  className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 ${
-                    alias.is_subscribed ? 'bg-indigo-600' : 'bg-slate-200'
-                  }`}
-                >
-                  <span
-                    className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform duration-200 ease-in-out ${
-                      alias.is_subscribed ? 'translate-x-6' : 'translate-x-1'
+              {/* 只有一般使用者可以看見 Toggle 按鈕與訂閱狀態 */}
+              {isNormalUser && (
+                <div className="flex items-center gap-4">
+                  <button
+                    onClick={() => handleToggle(alias.alias_name, alias.is_subscribed)}
+                    disabled={processingId === alias.alias_name}
+                    className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 ${
+                      alias.is_subscribed ? 'bg-indigo-600' : 'bg-slate-200'
                     }`}
-                  />
-                  {processingId === alias.alias_name && (
-                    <div className="absolute inset-0 flex items-center justify-center bg-white/20 rounded-full">
-                      <Loader2 className="animate-spin text-white" size={14} />
-                    </div>
-                  )}
-                </button>
+                  >
+                    <span
+                      className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform duration-200 ease-in-out ${
+                        alias.is_subscribed ? 'translate-x-6' : 'translate-x-1'
+                      }`}
+                    />
+                    {processingId === alias.alias_name && (
+                      <div className="absolute inset-0 flex items-center justify-center bg-white/20 rounded-full">
+                        <Loader2 className="animate-spin text-white" size={14} />
+                      </div>
+                    )}
+                  </button>
 
-                <span className={`text-sm font-semibold w-16 text-right ${
-                  alias.is_subscribed ? 'text-indigo-600' : 'text-slate-400'
-                }`}>
-                  {alias.is_subscribed ? '已訂閱' : '未訂閱'}
-                </span>
-              </div>
+                  <span className={`text-sm font-semibold w-16 text-right ${
+                    alias.is_subscribed ? 'text-indigo-600' : 'text-slate-400'
+                  }`}>
+                    {alias.is_subscribed ? '已訂閱' : '未訂閱'}
+                  </span>
+                </div>
+              )}
             </div>
           ))}
         </div>
       )}
 
-      <footer className="mt-10 bg-slate-100 p-4 rounded-lg flex items-start gap-3 border border-slate-200">
-        <Info className="text-slate-400 shrink-0 mt-0.5" size={18} />
-        <p className="text-xs text-slate-600">
-          <b>提示：</b> 訂閱變更可能需要幾分鐘的時間才會生效。如果您停止接收某個別名的郵件，請確認您在此處已取消勾選。
-        </p>
-      </footer>
+      {/* Admin 不需要看到這個提示 */}
+      {isNormalUser && (
+        <footer className="mt-10 bg-slate-100 p-4 rounded-lg flex items-start gap-3 border border-slate-200">
+          <Info className="text-slate-400 shrink-0 mt-0.5" size={18} />
+          <p className="text-xs text-slate-600">
+            <b>提示：</b> 訂閱變更可能需要幾分鐘的時間才會生效。如果您停止接收某個別名的郵件，請確認您在此處已取消勾選。
+          </p>
+        </footer>
+      )}
     </div>
   );
 }

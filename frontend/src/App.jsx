@@ -37,6 +37,7 @@ export default function App() {
         if (res.data && res.data.username) {
           setCurrentUser({
             username: res.data.username,
+            is_admin: res.data.is_admin,
             role: res.data.is_admin ? 'admin' : 'user' // Translate boolean to string
           });
         }
@@ -145,7 +146,7 @@ export default function App() {
                   path={item.path} 
                   element={
                     item.pub ? (
-                      <Element />
+                      <Element currentUser={currentUser} />
                     ) : (
                       <ProtectedRoute user={currentUser}>
                         <Element currentUser={currentUser} />
