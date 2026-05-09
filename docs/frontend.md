@@ -9,13 +9,13 @@ Connect to frontend at port `55111`.
     ├── src/
     │   ├── api/               # Axios instance and interceptors
     │   ├── constants/         # Configuration-driven navigation and routes
+    │   └── navConfig.js            # navigation bar settings   
     │   ├── component/         # HTML element components (e.g. buttons)
     │   └── pages/             # Page components
     │        ├── AdminAliasPage.jsx # Admin view all alias and create new alias
     │        ├── AliasDetail.jsx    # Admin modify page for single alias
     │        ├── index.jsx          # Index mapping
-    │        ├── AdminUserPage.jsx  # Allows admin to add users; to be removed
-    │        ├── HomePage.jsx       # User HomePage showing all alias add toggle; need to add "send button"
+    │        ├── HomePage.jsx       # User HomePage showing all alias add toggle, has "send" button for batch updates
     │        └── LoginPage.jsx      # User/Admin login page
     └── vite.config.js         # Vite configuration with proxy settings
 ```
