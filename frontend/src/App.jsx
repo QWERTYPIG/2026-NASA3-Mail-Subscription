@@ -12,7 +12,6 @@ import { navConfig } from './constants/navConfig';
 import {
   HomePage,
   LoginPage,
-  AdminUserPage,
   AdminAliasPage,
   AliasDetail
 } from './pages';
@@ -20,7 +19,6 @@ import {
 // 建立一個對照表，將路徑對應到實際的組件
 const componentMap = {
   '/': HomePage,
-  '/admin/users': AdminUserPage,
   '/admin/aliases': AdminAliasPage
 };
 
@@ -37,6 +35,7 @@ export default function App() {
         if (res.data && res.data.username) {
           setCurrentUser({
             username: res.data.username,
+            is_admin: res.data.is_admin,
             role: res.data.is_admin ? 'admin' : 'user' // Translate boolean to string
           });
         }
@@ -145,10 +144,10 @@ export default function App() {
                   path={item.path} 
                   element={
                     item.pub ? (
-                      <Element />
+                      <Element currentUser={currentUser} />
                     ) : (
                       <ProtectedRoute user={currentUser}>
-                        <Element />
+                        <Element currentUser={currentUser} />
                       </ProtectedRoute>
                     )
                   } 

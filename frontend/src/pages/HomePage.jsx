@@ -1,18 +1,30 @@
 import React, { useState, useEffect } from 'react';
-import api from '../api/axios'; // 確保你使用了帶有 withCredentials 的 axios 實體
+import api from '../api/axios'; 
 import { toast } from 'react-hot-toast';
-import { Mail, CheckCircle2, Circle, Loader2, Info } from 'lucide-react';
+import { Mail, CheckCircle2, Circle, Loader2, Info, Save } from 'lucide-react';
 
-export default function AliasPage() {
+// 1. 接收 currentUser prop
+export default function AliasPage({ currentUser }) {
   const [aliases, setAliases] = useState([]);
+  const [originalAliases, setOriginalAliases] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [processingId, setProcessingId] = useState(null); // 用於顯示特定按鈕的載入狀態
+  const [isSaving, setIsSaving] = useState(false); 
+  const [hasChanges, setHasChanges] = useState(false);
 
-  // 1. 取得別名清單與訂閱狀態
+  // 判斷是否為一般使用者 (只有一般使用者可以訂閱)
+  const isNormalUser = !currentUser?.is_admin;
+
   const fetchAliases = async () => {
     try {
-      const res = await api.get('/user/subscriptions/');
+      // 如果是 Admin，可能需要呼叫 admin endpoints，但為了顯示列表，我們先保留原本的 API，或者依賴後端的權限設計
+      const endpoint = isNormalUser ? '/user/subscriptions/' : '/admin/aliases/';
+      const res = await api.get(endpoint);
       setAliases(res.data);
+      //save original aliases state
+      if (isNormalUser) {
+        setOriginalAliases(JSON.parse(JSON.stringify(res.data)));
+        setHasChanges(false);
+      }
     } catch {
       toast.error("無法載入訂閱清單");
     } finally {
@@ -22,27 +34,38 @@ export default function AliasPage() {
 
   useEffect(() => {
     fetchAliases();
-  }, []);
+  }, [isNormalUser]); // 加入 dependency
 
-  // 2. 處理訂閱切換 (Toggle)
-  const handleToggle = async (aliasName, currentStatus) => {
-    setProcessingId(aliasName);
-    const newStatus = !currentStatus;
+  const handleToggle = (aliasName) => {
+    if (!isNormalUser) return;
     
+    setAliases(prev => {
+      const newAliases = prev.map(a => 
+        a.alias_name === aliasName ? { ...a, is_subscribed: !a.is_subscribed } : a
+      );
+      
+      // check if aliases are changed
+      const isDifferent = JSON.stringify(newAliases) !== JSON.stringify(originalAliases);
+      setHasChanges(isDifferent);
+      
+      return newAliases;
+    });
+  };
+
+  const handleSave = async () => {
+    if (!isNormalUser || !hasChanges) return;
+    setIsSaving(true);
+
     const payload = {};
     aliases.forEach(a => {
-      payload[a.alias_name] = a.alias_name === aliasName ? newStatus : a.is_subscribed;
+      payload[a.alias_name] = a.is_subscribed;
     });
     
     try {
       await api.put('/user/subscriptions/', payload);
-      
-      // Optimistic update using alias_name
-      setAliases(prev => prev.map(a => 
-        a.alias_name === aliasName ? { ...a, is_subscribed: newStatus } : a
-      ));
-      
       toast.success("已收到訂閱狀態更新請求，將於 10 分鐘內生效");
+      setOriginalAliases(JSON.parse(JSON.stringify(aliases)));
+      setHasChanges(false);
     } catch (err) {
       if (err.response?.status === 429) {
         toast.error(err.response.data.detail || "操作過於頻繁，請稍後再試");
@@ -50,7 +73,7 @@ export default function AliasPage() {
         toast.error("操作失敗，請稍後再試");
       }
     } finally {
-      setProcessingId(null);
+      setIsSaving(false);
     }
   };
 
@@ -67,10 +90,12 @@ export default function AliasPage() {
     <div className="max-w-4xl mx-auto">
       <header className="mb-8">
         <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-          <Mail className="text-indigo-600" /> 郵件別名訂閱管理
+          <Mail className="text-indigo-600" /> {isNormalUser ? "郵件別名訂閱管理" : "郵件別名總覽"}
         </h1>
         <p className="text-slate-500 mt-1">
-          在此管理您感興趣的郵件群組，訂閱後您將會收到發往該別名的郵件。
+          {isNormalUser 
+            ? "在此管理您感興趣的郵件群組，訂閱後您將會收到發往該別名的郵件。"
+            : "身為管理員，您可以在此查看系統中所有的郵件別名。請至「別名系統管理」進行修改。"}
         </p>
       </header>
 
@@ -80,68 +105,93 @@ export default function AliasPage() {
         </div>
       ) : (
         <div className="grid gap-4">
-          {aliases.map((alias) => (
-            <div 
-              key={alias.alias_name} 
-              className={`group bg-white p-5 rounded-xl border transition-all duration-200 flex items-center justify-between ${
-                alias.is_subscribed 
-                ? 'border-indigo-100 shadow-sm ring-1 ring-indigo-50' 
-                : 'border-slate-200 hover:border-slate-300 shadow-none'
-              }`}
-            >
-              <div className="flex items-start gap-4">
-                <div className={`mt-1 p-2 rounded-lg ${alias.is_subscribed ? 'bg-indigo-50 text-indigo-600' : 'bg-slate-50 text-slate-400'}`}>
-                  {alias.is_subscribed ? <CheckCircle2 size={20} /> : <Circle size={20} />}
-                </div>
-                <div>
-                  {/*change alias_name to desplay_name later*/}
-                  <h3 className="font-bold text-slate-800 text-lg uppercase tracking-tight">
-                    {alias.alias_name}
-                  </h3>
-                  <p className="text-slate-500 text-sm mt-0.5 leading-relaxed">
-                    {alias.description || "尚無描述"}
-                  </p>
-                </div>
-              </div>
+          {aliases.map((alias) => {
+            // check if aliases were changed
+            const originalAlias = originalAliases.find(a => a.alias_name === alias.alias_name);
+            const isModified = originalAlias && originalAlias.is_subscribed !== alias.is_subscribed;
 
-              <div className="flex items-center gap-4">
-                {/* 使用者看到的 Toggle 按鈕 */}
-                <button
-                  onClick={() => handleToggle(alias.alias_name, alias.is_subscribed)}
-                  disabled={processingId === alias.alias_name}
-                  className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 ${
-                    alias.is_subscribed ? 'bg-indigo-600' : 'bg-slate-200'
-                  }`}
-                >
-                  <span
-                    className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform duration-200 ease-in-out ${
-                      alias.is_subscribed ? 'translate-x-6' : 'translate-x-1'
-                    }`}
-                  />
-                  {processingId === alias.alias_name && (
-                    <div className="absolute inset-0 flex items-center justify-center bg-white/20 rounded-full">
-                      <Loader2 className="animate-spin text-white" size={14} />
-                    </div>
-                  )}
-                </button>
+            return (
+              <div 
+                key={alias.alias_name} 
+                className={`group bg-white p-5 rounded-xl border transition-all duration-200 flex items-center justify-between ${
+                  isModified ? 'border-amber-300 bg-amber-50/30' // hint that the alias was modified but not saved
+                  : ((isNormalUser && alias.is_subscribed) 
+                    ? 'border-indigo-100 shadow-sm ring-1 ring-indigo-50' 
+                    : 'border-slate-200 hover:border-slate-300 shadow-none')
+                }`}
+              >
+                <div className="flex items-start gap-4">
+                  <div className={`mt-1 p-2 rounded-lg ${
+                    (isNormalUser && alias.is_subscribed) ? 'bg-indigo-50 text-indigo-600' : 'bg-slate-50 text-slate-400'
+                  }`}>
+                    {!isNormalUser ? <Mail size={20} /> : (alias.is_subscribed ? <CheckCircle2 size={20} /> : <Circle size={20} />)}
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-slate-800 text-lg uppercase tracking-tight flex items-center gap-2">
+                      {alias.display_name || alias.alias_name}
+                      {isModified && <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-bold">未儲存</span>}
+                    </h3>
+                    <p className="text-slate-500 text-sm mt-0.5 leading-relaxed">
+                      {alias.description || "尚無描述"}
+                    </p>
+                  </div>
+                </div>
 
-                <span className={`text-sm font-semibold w-16 text-right ${
-                  alias.is_subscribed ? 'text-indigo-600' : 'text-slate-400'
-                }`}>
-                  {alias.is_subscribed ? '已訂閱' : '未訂閱'}
-                </span>
+                {isNormalUser && (
+                  <div className="flex items-center gap-4">
+                    <button
+                      onClick={() => handleToggle(alias.alias_name)}
+                      className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 ${
+                        alias.is_subscribed ? 'bg-indigo-600' : 'bg-slate-200'
+                      }`}
+                    >
+                      <span
+                        className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform duration-200 ease-in-out ${
+                          alias.is_subscribed ? 'translate-x-6' : 'translate-x-1'
+                        }`}
+                      />
+                    </button>
+
+                    <span className={`text-sm font-semibold w-16 text-right ${
+                      alias.is_subscribed ? 'text-indigo-600' : 'text-slate-400'
+                    }`}>
+                      {alias.is_subscribed ? '已訂閱' : '未訂閱'}
+                    </span>
+                  </div>
+                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
-      <footer className="mt-10 bg-slate-100 p-4 rounded-lg flex items-start gap-3 border border-slate-200">
-        <Info className="text-slate-400 shrink-0 mt-0.5" size={18} />
-        <p className="text-xs text-slate-600">
-          <b>提示：</b> 訂閱變更可能需要幾分鐘的時間才會生效。如果您停止接收某個別名的郵件，請確認您在此處已取消勾選。
-        </p>
-      </footer>
+      {isNormalUser && (
+        <>
+          {/* 儲存按鈕區塊 */}
+          <div className="mt-8 flex justify-end border-t border-slate-200 pt-6">
+            <button
+              onClick={handleSave}
+              disabled={!hasChanges || isSaving}
+              className={`flex items-center gap-2 px-8 py-3 rounded-xl font-bold text-lg transition-all ${
+                hasChanges 
+                  ? 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg shadow-indigo-200 active:scale-[0.98]' 
+                  : 'bg-slate-100 text-slate-400 cursor-not-allowed'
+              }`}
+            >
+              {isSaving ? <Loader2 className="animate-spin" size={20} /> : <Save size={20} />}
+              儲存變更
+            </button>
+          </div>
+
+          {/* 提示區塊 */}
+          <footer className="mt-6 bg-slate-50 p-4 rounded-lg flex items-start gap-3 border border-slate-200">
+            <Info className="text-slate-400 shrink-0 mt-0.5" size={18} />
+            <p className="text-xs text-slate-600">
+              <b>提示：</b> 變更送出後將進入 10 分鐘冷卻期，請確認勾選無誤後再行儲存。如果停止接收某個別名的郵件，請確認您在此處已取消勾選。
+            </p>
+          </footer>
+        </>
+      )}
     </div>
   );
 }

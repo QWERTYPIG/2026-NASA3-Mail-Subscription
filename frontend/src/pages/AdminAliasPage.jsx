@@ -40,6 +40,17 @@ const AdminAliasPage = () => {
     }
   };
 
+  const handleDelete = async (aliasName, displayName) => {
+    if (!window.confirm(`確定要刪除群組「${displayName}」嗎？此動作不可逆。`)) return;
+    try {
+      await api.delete(`/admin/aliases/${aliasName}/`);
+      toast.success("已成功刪除別名");
+      fetchAliases(); // Refresh the list
+    } catch {
+      toast.error("刪除失敗");
+    }
+  };
+
   if (loading) return <div className="flex justify-center p-20"><Loader2 className="animate-spin text-indigo-600" size={40} /></div>;
 
   return (
@@ -61,26 +72,33 @@ const AdminAliasPage = () => {
 
       <div className="grid gap-4">
         {aliases.map(alias => (
-          <div key={alias.id} className="bg-white border border-slate-200 rounded-xl p-5 flex items-center justify-between hover:shadow-md transition-shadow">
+          <div key={alias.alias_name} className="bg-white border border-slate-200 rounded-xl p-5 flex items-center justify-between hover:shadow-md transition-shadow">
             <div className="flex items-center gap-4">
               <div className="bg-indigo-50 p-3 rounded-full text-indigo-600">
                 <Mail size={24} />
               </div>
               <div>
-                <h3 className="font-bold text-slate-800 text-lg uppercase tracking-wide">{alias.name}</h3>
+                <h3 className="font-bold text-slate-800 text-lg uppercase tracking-wide">{alias.display_name || alias.alias_name}</h3>
                 <p className="text-slate-500 text-sm">{alias.description || "暫無描述"}</p>
               </div>
             </div>
 
             <div className="flex items-center gap-2">
               <Link 
-                to={`/admin/alias/${alias.id}`}
+                to={`/admin/alias/${alias.alias_name}`}
                 className="flex items-center gap-2 px-4 py-2 bg-slate-100 text-slate-700 font-semibold rounded-lg hover:bg-indigo-600 hover:text-white transition-all"
               >
                 <Settings size={16} />
-                <span>管理成員</span>
+                <span>管理成員/更改簡述</span>
                 <ArrowRight size={16} />
               </Link>
+              <button 
+                onClick={() => handleDelete(alias.alias_name, alias.display_name || alias.alias_name)}
+                className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                title="刪除別名"
+              >
+                <Trash2 size={20} />
+              </button>
             </div>
           </div>
         ))}
