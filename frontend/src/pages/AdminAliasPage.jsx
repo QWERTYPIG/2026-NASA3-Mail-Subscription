@@ -89,7 +89,7 @@ const AdminAliasPage = () => {
                 className="flex items-center gap-2 px-4 py-2 bg-slate-100 text-slate-700 font-semibold rounded-lg hover:bg-indigo-600 hover:text-white transition-all"
               >
                 <Settings size={16} />
-                <span>管理成員</span>
+                <span>管理成員/更改簡述</span>
                 <ArrowRight size={16} />
               </Link>
               <button 
