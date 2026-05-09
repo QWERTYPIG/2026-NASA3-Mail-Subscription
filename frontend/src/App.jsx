@@ -12,7 +12,6 @@ import { navConfig } from './constants/navConfig';
 import {
   HomePage,
   LoginPage,
-  AdminUserPage,
   AdminAliasPage,
   AliasDetail
 } from './pages';
@@ -20,7 +19,6 @@ import {
 // 建立一個對照表，將路徑對應到實際的組件
 const componentMap = {
   '/': HomePage,
-  '/admin/users': AdminUserPage,
   '/admin/aliases': AdminAliasPage
 };
 
