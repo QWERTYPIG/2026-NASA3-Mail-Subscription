@@ -49,7 +49,7 @@ export default function LoginPage({ currentUser, onLoginSuccess }) {
           <div className="inline-flex items-center justify-center w-16 h-16 bg-indigo-600 text-white rounded-2xl shadow-lg mb-4">
             <Mail size={32} />
           </div>
-          <h1 className="text-3xl font-bold text-slate-800">Mail Sub</h1>
+          <h1 className="text-3xl font-bold !text-slate-800">Mail Sub</h1>
           <p className="text-slate-500 mt-2">請登入以管理您的郵件訂閱</p>
         </div>
 
