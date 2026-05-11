@@ -98,7 +98,7 @@ const AliasDetail = () => {
         {/* 左側：基本設定表單 */}
         <div className="md:col-span-1">
           <section className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm sticky top-24">
-            <h2 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
+            <h2 className="text-lg font-bold !text-slate-800 mb-4 flex items-center gap-2">
               <Settings size={18} className="text-indigo-500" /> 別名設定 ({id})
             </h2>
             <form onSubmit={handleUpdateAlias} className="space-y-4">

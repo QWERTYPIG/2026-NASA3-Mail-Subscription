@@ -89,7 +89,7 @@ export default function AliasPage({ currentUser }) {
   return (
     <div className="max-w-4xl mx-auto">
       <header className="mb-8">
-        <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
+        <h1 className="text-2xl font-bold !text-slate-800 flex items-center gap-2">
           <Mail className="text-indigo-600" /> {isNormalUser ? "郵件別名訂閱管理" : "郵件別名總覽"}
         </h1>
         <p className="text-slate-500 mt-1">

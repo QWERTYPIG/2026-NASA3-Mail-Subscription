@@ -57,7 +57,7 @@ const AdminAliasPage = () => {
     <div className="max-w-5xl mx-auto">
       <div className="flex justify-between items-center mb-8">
         <div>
-          <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
+          <h1 className="text-2xl font-bold !text-slate-800 flex items-center gap-2">
             <ShieldCheck className="text-indigo-600" /> 別名系統管理
           </h1>
           <p className="text-slate-500">管理郵件群組、查看訂閱成員與別名設定。</p>
