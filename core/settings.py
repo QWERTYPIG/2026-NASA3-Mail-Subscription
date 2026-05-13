@@ -185,9 +185,16 @@ AUTHENTICATION_BACKENDS = [
     "django.contrib.auth.backends.ModelBackend",
 ]
 # LDAP
-AUTH_LDAP_SERVER_URI = os.environ.get("LDAP_URI", "ldap://172.16.127.109:389")
+AUTH_LDAP_SERVER_URI = os.environ.get("LDAP_URI", "ldaps://172.16.127.109:636")
 AUTH_LDAP_BIND_DN = os.environ.get("LDAP_BIND_DN", "")
 AUTH_LDAP_BIND_PASSWORD = os.environ.get("LDAP_BIND_PASSWORD", "")
+_LDAP_CA_CERT_FILE = os.environ.get("LDAP_CA_CERT_FILE", "")
+assert _LDAP_CA_CERT_FILE, "LDAP_CA_CERT_FILE must be set"
+AUTH_LDAP_CONNECTION_OPTIONS = {
+    ldap.OPT_X_TLS_CACERTFILE: _LDAP_CA_CERT_FILE,
+    ldap.OPT_X_TLS_REQUIRE_CERT: ldap.OPT_X_TLS_DEMAND,
+    ldap.OPT_X_TLS_NEWCTX: 0,
+}
 # find user
 AUTH_LDAP_USER_SEARCH = LDAPSearch(
     "ou=people,dc=csie,dc=ntu,dc=edu,dc=tw", ldap.SCOPE_SUBTREE, "(uid=%(user)s)"
