@@ -1,9 +1,10 @@
 import logging
 import os
+import ssl
 import time
 
 from django.core.cache import cache
-from ldap3 import LEVEL, MODIFY_ADD, MODIFY_DELETE, Connection, Server
+from ldap3 import LEVEL, MODIFY_ADD, MODIFY_DELETE, Connection, Server, Tls
 from ldap3.core.exceptions import LDAPEntryAlreadyExistsResult, LDAPException
 
 from core.mail import send_alert_email
@@ -16,12 +17,13 @@ logger = logging.getLogger(__name__)
 # LDAP constants
 # ---------------------------------------------------------------------------
 
-LDAP_URI = os.environ.get("LDAP_URI", "ldap://172.16.127.109:389")
+LDAP_URI = os.environ.get("LDAP_URI", "ldaps://172.16.127.109:636")
 LDAP_BIND_DN = os.environ.get(
     "LDAP_BIND_DN",
     "uid=mailtest,ou=people,dc=csie,dc=ntu,dc=edu,dc=tw",
 )
 LDAP_BIND_PASSWORD = os.environ.get("LDAP_BIND_PASSWORD", "")
+LDAP_CA_CERT_FILE = os.environ.get("LDAP_CA_CERT_FILE", "")
 
 BASE_DN = "dc=csie,dc=ntu,dc=edu,dc=tw"
 ALIASES_DN = f"ou=Aliases,{BASE_DN}"
@@ -62,7 +64,12 @@ ALERT_RECIPIENTS = [
 
 
 def _connect() -> Connection:
-    server = Server(LDAP_URI, connect_timeout=10)
+    if not LDAP_CA_CERT_FILE:
+        raise RuntimeError(
+            "LDAP_CA_CERT_FILE is not set — refusing to connect without certificate validation"
+        )
+    tls = Tls(ca_certs_file=LDAP_CA_CERT_FILE, validate=ssl.CERT_REQUIRED)
+    server = Server(LDAP_URI, use_ssl=True, tls=tls, connect_timeout=10)
     try:
         conn = Connection(
             server,
