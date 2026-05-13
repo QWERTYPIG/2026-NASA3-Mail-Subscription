@@ -49,16 +49,22 @@ class AdminAliasUserListView(APIView):
                     return not_found_response()
 
                 # 3. 檢查是否已在訂閱名單中，避免重複寫入
-                if uid not in alias.user_id:
-                    alias.user_id.append(uid)
-                    alias.save(update_fields=["user_id"])
-                    
-                    # 4. 寫入 Task Queue 供背景工作同步至 LDAP
-                    UserTaskQueue.objects.create(
-                        alias_name=alias.alias_name,
-                        user_uid=uid,
-                        action="add",
+                if uid in alias.user_id:
+                    # 使用 utils.py 中的 conflict_response 回傳 HTTP 409
+                    return conflict_response(
+                        "該用戶已經存在於此別名中", 
+                        {"uid": uid}
                     )
+
+                alias.user_id.append(uid)
+                alias.save(update_fields=["user_id"])
+                    
+                # 4. 寫入 Task Queue 供背景工作同步至 LDAP
+                UserTaskQueue.objects.create(
+                    alias_name=alias.alias_name,
+                    user_uid=uid,
+                    action="add",
+                )
         except Exception:
             return internal_error_response()
 
