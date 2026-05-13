@@ -189,35 +189,45 @@ def run_consistency_check(conn: Connection) -> None:
 
     LDAP is the source of truth; DB is always updated to match LDAP.
     """
-    conn.search(
-        ALIASES_DN,
-        "(objectClass=groupOfUniqueNames)",
-        search_scope=LEVEL,
-        attributes=["cn", "uniqueMember"],
-    )
-
-    ldap_alias_names = set()
-    for entry in conn.entries:
-        alias_name = entry.cn.value
-        ldap_alias_names.add(alias_name)
-        raw_members = entry.uniqueMember.values if entry.uniqueMember else []
-
-        user_ids = []
-        for member_dn in raw_members:
-            # Full DN format: uid=<uid>,ou=people,...
-            # Skip the placeholder bind DN used when an alias has no real members.
-            if member_dn == LDAP_BIND_DN:
-                continue
-            if member_dn.startswith("uid="):
-                uid = member_dn.split(",")[0][len("uid=") :]
-                user_ids.append(uid)
-
-        Alias.objects.update_or_create(
-            alias_name=alias_name,
-            defaults={"user_id": user_ids},
+    try:
+        conn.search(
+            ALIASES_DN,
+            "(objectClass=groupOfUniqueNames)",
+            search_scope=LEVEL,
+            attributes=["cn", "uniqueMember"],
         )
 
-    Alias.objects.exclude(alias_name__in=ldap_alias_names).delete()
+        ldap_alias_names = set()
+        for entry in conn.entries:
+            alias_name = entry.cn.value
+            ldap_alias_names.add(alias_name)
+            raw_members = entry.uniqueMember.values if entry.uniqueMember else []
+
+            user_ids = []
+            for member_dn in raw_members:
+                # Full DN format: uid=<uid>,ou=people,...
+                # Skip the placeholder bind DN used when an alias has no real members.
+                if member_dn == LDAP_BIND_DN:
+                    continue
+                if member_dn.startswith("uid="):
+                    uid = member_dn.split(",")[0][len("uid=") :]
+                    user_ids.append(uid)
+
+            Alias.objects.update_or_create(
+                alias_name=alias_name,
+                defaults={"user_id": user_ids},
+            )
+
+        Alias.objects.exclude(alias_name__in=ldap_alias_names).delete()
+
+    except Exception as exc:
+        logger.error("run_consistency_check: failed — %s", exc)
+        send_alert_email(
+            recipients=ALERT_RECIPIENTS,
+            subject="LDAP Consistency Check Failure",
+            body=f"run_consistency_check failed:\n\n{exc}",
+        )
+        raise
 
 
 # ---------------------------------------------------------------------------
