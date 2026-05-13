@@ -4,7 +4,7 @@ import ssl
 import time
 
 from django.core.cache import cache
-from ldap3 import LEVEL, MODIFY_ADD, MODIFY_DELETE, Connection, Server
+from ldap3 import LEVEL, MODIFY_ADD, MODIFY_DELETE, Connection, Server, Tls
 from ldap3.core.exceptions import (
     LDAPAttributeOrValueExistsResult,
     LDAPEntryAlreadyExistsResult,
