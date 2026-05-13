@@ -257,7 +257,12 @@ def flush_ldap_tasks() -> None:
             run_consistency_check(conn)
         finally:
             conn.unbind()
-    except Exception:
+    except Exception as exc:
         logger.exception("flush_ldap_tasks: unexpected error")
+        send_alert_email(
+            recipients=ALERT_RECIPIENTS,
+            subject="LDAP Flush Unexpected Error",
+            body=f"flush_ldap_tasks failed with an unexpected error:\n\n{exc}",
+        )
     finally:
         cache.delete(FLUSH_LOCK_KEY)
