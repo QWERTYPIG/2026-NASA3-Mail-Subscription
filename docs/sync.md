@@ -31,9 +31,19 @@
 超過後放棄，task row 留在 queue 不刪除
 ```
 
+### 冪等處理
+
+部分 LDAP 結果代表**目標狀態已達成**，視為成功並刪除 task，不計入失敗：
+
+| 操作 | 冪等結果 | 說明 |
+|------|----------|------|
+| alias add | `LDAPEntryAlreadyExistsResult` | alias entry 已存在 |
+| user add | `LDAPAttributeOrValueExistsResult` | 成員已在 `uniqueMember` 中 |
+| user remove | `LDAPNoSuchAttributeResult` | 成員本來就不在 `uniqueMember` 中 |
+
 ### Failed Task 處理
 
-全部 retry 耗盡後，task row **保留在 queue**（不刪除）。由於 `alias_task_queue` 與 `user_task_queue` 都以 `id` 排序（`ordering = ['id']`），失敗的 task 在下一次 flush 時仍會排在最前面優先處理。
+全部 retry 耗盡且非冪等結果後，task row **保留在 queue**（不刪除）。由於 `alias_task_queue` 與 `user_task_queue` 都以 `id` 排序（`ordering = ['id']`），失敗的 task 在下一次 flush 時仍會排在最前面優先處理。
 
 ### Redis Lock（防止重疊執行）
 
