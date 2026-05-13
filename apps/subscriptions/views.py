@@ -14,10 +14,10 @@ from .serializers import (
     AliasUpdateSerializer,
     SubscriptionSerializer,
     UserSubscriptionUpdateSerializer,
+    AddAliasMemberSerializer
 )
 from .throttles import UserSubscriptionCooldownThrottle
 from .utils import not_found_response, internal_error_response, validation_error_response, conflict_response
-
 
 class AdminAliasUserListView(APIView):
     permission_classes = [IsAdminUser]
@@ -32,33 +32,46 @@ class AdminAliasUserListView(APIView):
         return Response(alias.user_id, status=status.HTTP_200_OK)
 
     def post(self, request, alias_name):
-        uid = request.data.get("uid")
-        
-        if not uid or len(uid) != 9:
-            return validation_error_response({"uid": ["Ensure this field has exactly 9 characters."]})
+        # 1. 使用 Serializer 進行驗證 (包含 LDAP 同步檢查)
+        serializer = AddAliasMemberSerializer(data=request.data)
+        if not serializer.is_valid():
+            return validation_error_response(serializer.errors)
+
+        # 2. 取得經過正規化 (lowercase) 且驗證存在的 UID
+        uid = serializer.validated_data["uid"]
 
         try:
             with transaction.atomic():
                 try:
-                    # Select for update to prevent concurrent race conditions
+                    # 使用 select_for_update 避免併發競爭
                     alias = Alias.objects.select_for_update().get(alias_name=alias_name)
                 except Alias.DoesNotExist:
                     return not_found_response()
 
-                if uid not in alias.user_id:
-                    alias.user_id.append(uid)
-                    alias.save(update_fields=["user_id"])
-                    
-                    UserTaskQueue.objects.create(
-                        alias_name=alias.alias_name,
-                        user_uid=uid,
-                        action="add",
+                # 3. 檢查是否已在訂閱名單中，避免重複寫入
+                if uid in alias.user_id:
+                    # 使用 utils.py 中的 conflict_response 回傳 HTTP 409
+                    return conflict_response(
+                        "該用戶已經存在於此別名中", 
+                        {"uid": uid}
                     )
+
+                alias.user_id.append(uid)
+                alias.save(update_fields=["user_id"])
+                    
+                # 4. 寫入 Task Queue 供背景工作同步至 LDAP
+                UserTaskQueue.objects.create(
+                    alias_name=alias.alias_name,
+                    user_uid=uid,
+                    action="add",
+                )
         except Exception:
             return internal_error_response()
 
-        return Response(status=status.HTTP_200_OK)
-
+        return Response(
+            {"status": "success", "message": f"User {uid} added to {alias_name}"}, 
+            status=status.HTTP_200_OK
+        )
 
 class AdminAliasUserDetailView(APIView):
     permission_classes = [IsAdminUser]
