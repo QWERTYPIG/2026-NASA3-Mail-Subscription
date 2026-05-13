@@ -7,6 +7,8 @@ services:
       POSTGRES_DB: ${DB_NAME:-Subscriptions}
       POSTGRES_USER: ${DB_USER:-MailAdmin}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-password}
+    env_file:
+      - .env
     ports:
       - "5432:5432"
     volumes:
@@ -47,6 +49,8 @@ services:
       - SMTP_HOST=${SMTP_HOST:-localhost}
       - SMTP_PORT=${SMTP_PORT:-25}
       - ALERT_EMAIL_SENDER=${ALERT_EMAIL_SENDER:-mailsub-alert@csie.ntu.edu.tw}
+    env_file:
+      - .env
     depends_on:
       - postgres
       - redis
@@ -73,6 +77,8 @@ services:
       - SMTP_HOST=${SMTP_HOST:-localhost}
       - SMTP_PORT=${SMTP_PORT:-25}
       - ALERT_EMAIL_SENDER=${ALERT_EMAIL_SENDER:-mailsub-alert@csie.ntu.edu.tw}
+    env_file:
+      - .env
     depends_on:
       - postgres
       - redis
