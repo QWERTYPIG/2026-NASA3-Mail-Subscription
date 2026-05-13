@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from django_auth_ldap.backend import LDAPBackend
 
 from .models import Alias
 
@@ -110,3 +111,25 @@ class UserSubscriptionUpdateSerializer(serializers.Serializer):
             self._raise_non_field_error("unknown_aliases", aliases=", ".join(unknown))
 
         return attrs
+
+class AddAliasMemberSerializer(serializers.Serializer):
+    """Validate UID format and existence in LDAP before adding."""
+    uid = serializers.CharField(max_length=50)
+
+    def validate_uid(self, value):
+        uid = value.strip().lower()
+        
+        # 1. Basic format validation (matching the frontend rules)
+        if not uid.isalnum():
+            raise serializers.ValidationError("UID 格式錯誤，僅允許英數字。")
+
+        # 2. LDAP Synchronous Verification
+        # Leverage your existing AUTH_LDAP_USER_SEARCH settings to query the server
+        ldap_backend = LDAPBackend()
+        ldap_user = ldap_backend.populate_user(uid)
+        
+        if ldap_user is None:
+            # This string maps directly to errorData.details.uid[0] in React
+            raise serializers.ValidationError("此帳號不存在於 LDAP 系統中。")
+            
+        return uid
