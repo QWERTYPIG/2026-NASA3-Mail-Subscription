@@ -96,6 +96,8 @@ def _member_dn(user_uid: str) -> str:
 
 def flush_alias_tasks(conn: Connection) -> None:
     """Process all rows in AliasTaskQueue in id order."""
+    failures: list[str] = []
+
     for task in AliasTaskQueue.objects.all():
         dn = _alias_dn(task.alias_name)
         try:
@@ -137,10 +139,20 @@ def flush_alias_tasks(conn: Connection) -> None:
                 task.alias_name,
                 exc,
             )
+            failures.append(f"  - {task.action} {task.alias_name}: {exc}")
+
+    if failures:
+        send_alert_email(
+            recipients=ALERT_RECIPIENTS,
+            subject="LDAP Alias Task Failures",
+            body=f"{len(failures)} alias task(s) failed during flush:\n" + "\n".join(failures),
+        )
 
 
 def flush_user_tasks(conn: Connection) -> None:
     """Process all rows in UserTaskQueue in id order."""
+    failures: list[str] = []
+
     for task in UserTaskQueue.objects.all():
         dn = _alias_dn(task.alias_name)
         member = _member_dn(task.user_uid)
@@ -162,6 +174,14 @@ def flush_user_tasks(conn: Connection) -> None:
                 task.alias_name,
                 exc,
             )
+            failures.append(f"  - {task.action} {task.user_uid} @ {task.alias_name}: {exc}")
+
+    if failures:
+        send_alert_email(
+            recipients=ALERT_RECIPIENTS,
+            subject="LDAP User Task Failures",
+            body=f"{len(failures)} user task(s) failed during flush:\n" + "\n".join(failures),
+        )
 
 
 def run_consistency_check(conn: Connection) -> None:
@@ -169,35 +189,45 @@ def run_consistency_check(conn: Connection) -> None:
 
     LDAP is the source of truth; DB is always updated to match LDAP.
     """
-    conn.search(
-        ALIASES_DN,
-        "(objectClass=groupOfUniqueNames)",
-        search_scope=LEVEL,
-        attributes=["cn", "uniqueMember"],
-    )
-
-    ldap_alias_names = set()
-    for entry in conn.entries:
-        alias_name = entry.cn.value
-        ldap_alias_names.add(alias_name)
-        raw_members = entry.uniqueMember.values if entry.uniqueMember else []
-
-        user_ids = []
-        for member_dn in raw_members:
-            # Full DN format: uid=<uid>,ou=people,...
-            # Skip the placeholder bind DN used when an alias has no real members.
-            if member_dn == LDAP_BIND_DN:
-                continue
-            if member_dn.startswith("uid="):
-                uid = member_dn.split(",")[0][len("uid=") :]
-                user_ids.append(uid)
-
-        Alias.objects.update_or_create(
-            alias_name=alias_name,
-            defaults={"user_id": user_ids},
+    try:
+        conn.search(
+            ALIASES_DN,
+            "(objectClass=groupOfUniqueNames)",
+            search_scope=LEVEL,
+            attributes=["cn", "uniqueMember"],
         )
 
-    Alias.objects.exclude(alias_name__in=ldap_alias_names).delete()
+        ldap_alias_names = set()
+        for entry in conn.entries:
+            alias_name = entry.cn.value
+            ldap_alias_names.add(alias_name)
+            raw_members = entry.uniqueMember.values if entry.uniqueMember else []
+
+            user_ids = []
+            for member_dn in raw_members:
+                # Full DN format: uid=<uid>,ou=people,...
+                # Skip the placeholder bind DN used when an alias has no real members.
+                if member_dn == LDAP_BIND_DN:
+                    continue
+                if member_dn.startswith("uid="):
+                    uid = member_dn.split(",")[0][len("uid=") :]
+                    user_ids.append(uid)
+
+            Alias.objects.update_or_create(
+                alias_name=alias_name,
+                defaults={"user_id": user_ids},
+            )
+
+        Alias.objects.exclude(alias_name__in=ldap_alias_names).delete()
+
+    except Exception as exc:
+        logger.error("run_consistency_check: failed — %s", exc)
+        send_alert_email(
+            recipients=ALERT_RECIPIENTS,
+            subject="LDAP Consistency Check Failure",
+            body=f"run_consistency_check failed:\n\n{exc}",
+        )
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -227,7 +257,12 @@ def flush_ldap_tasks() -> None:
             run_consistency_check(conn)
         finally:
             conn.unbind()
-    except Exception:
+    except Exception as exc:
         logger.exception("flush_ldap_tasks: unexpected error")
+        send_alert_email(
+            recipients=ALERT_RECIPIENTS,
+            subject="LDAP Flush Unexpected Error",
+            body=f"flush_ldap_tasks failed with an unexpected error:\n\n{exc}",
+        )
     finally:
         cache.delete(FLUSH_LOCK_KEY)
