@@ -324,6 +324,32 @@ X-CSRFToken: <csrftoken cookie 的值>
 }
 ```
 
+**Possible Errors**
+
+- `400 Bad Request` — 格式錯誤，或該user不存在。
+
+```json
+{
+  "error": "Validation failed",
+  "code": "VALIDATION_ERROR",
+  "details": {
+    "uid": ["此帳號不存在於 LDAP 系統中。"]
+  }
+}
+```
+
+- `409 Conflict` - 該用戶已經存在於此 alias 的訂閱名單中。
+
+```json
+{
+  "error": "Validation failed",
+  "code": "VALIDATION_ERROR",
+  "details": {
+    "uid": ["此帳號不存在於 LDAP 系統中。"]
+  }
+}
+```
+
 ---
 
 ### `DELETE /api/v1/admin/aliases/<alias_name>/users/<uid>/`
