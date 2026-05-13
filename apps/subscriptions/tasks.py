@@ -96,6 +96,8 @@ def _member_dn(user_uid: str) -> str:
 
 def flush_alias_tasks(conn: Connection) -> None:
     """Process all rows in AliasTaskQueue in id order."""
+    failures: list[str] = []
+
     for task in AliasTaskQueue.objects.all():
         dn = _alias_dn(task.alias_name)
         try:
@@ -137,6 +139,14 @@ def flush_alias_tasks(conn: Connection) -> None:
                 task.alias_name,
                 exc,
             )
+            failures.append(f"  - {task.action} {task.alias_name}: {exc}")
+
+    if failures:
+        send_alert_email(
+            recipients=ALERT_RECIPIENTS,
+            subject="LDAP Alias Task Failures",
+            body=f"{len(failures)} alias task(s) failed during flush:\n" + "\n".join(failures),
+        )
 
 
 def flush_user_tasks(conn: Connection) -> None:
