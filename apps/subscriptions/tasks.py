@@ -151,6 +151,8 @@ def flush_alias_tasks(conn: Connection) -> None:
 
 def flush_user_tasks(conn: Connection) -> None:
     """Process all rows in UserTaskQueue in id order."""
+    failures: list[str] = []
+
     for task in UserTaskQueue.objects.all():
         dn = _alias_dn(task.alias_name)
         member = _member_dn(task.user_uid)
@@ -172,6 +174,14 @@ def flush_user_tasks(conn: Connection) -> None:
                 task.alias_name,
                 exc,
             )
+            failures.append(f"  - {task.action} {task.user_uid} @ {task.alias_name}: {exc}")
+
+    if failures:
+        send_alert_email(
+            recipients=ALERT_RECIPIENTS,
+            subject="LDAP User Task Failures",
+            body=f"{len(failures)} user task(s) failed during flush:\n" + "\n".join(failures),
+        )
 
 
 def run_consistency_check(conn: Connection) -> None:
