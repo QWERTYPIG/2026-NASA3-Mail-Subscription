@@ -78,7 +78,7 @@ class AdminAliasUserDetailView(APIView):
 
     def delete(self, request, alias_name, uid):
         if not uid:
-            return validation_error_response({"uid": ["Ensure this field has exactly 9 characters."]})
+            return validation_error_response({"uid": ["User not found."]})
 
         try:
             with transaction.atomic():
