@@ -326,7 +326,7 @@ X-CSRFToken: <csrftoken cookie 的值>
 
 **Possible Errors**
 
-- `400 Bad Request` — 格式錯誤，或該user不存在。
+- `400 Bad Request` — 格式錯誤，或該user不存在，或不屬於能被加入alias的group (student, graduate, alumni, prof)。
 
 ```json
 {
@@ -345,7 +345,7 @@ X-CSRFToken: <csrftoken cookie 的值>
   "error": "Validation failed",
   "code": "VALIDATION_ERROR",
   "details": {
-    "uid": ["此帳號不存在於 LDAP 系統中。"]
+    "uid": ["該用戶已經存在於此別名中。"]
   }
 }
 ```
@@ -380,7 +380,7 @@ X-CSRFToken: <csrftoken cookie 的值>
   "code": "VALIDATION_ERROR",
   "details": {
     "alias_name": ["Alias name can only contain lowercase letters and numbers."],
-    "uid": ["Ensure this field has exactly 9 characters."]
+    "uid": ["User not found."]
   }
 }
 ```
