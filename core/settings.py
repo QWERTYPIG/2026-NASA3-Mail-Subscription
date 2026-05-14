@@ -178,6 +178,7 @@ CSRF_TRUSTED_ORIGINS = [
     "http://localhost:55111",
     "http://127.0.0.1:55111",
     "http://172.16.127.102:55111",
+    "https://mailsus.csie.org",
 ]
 # Authentication
 AUTHENTICATION_BACKENDS = [
