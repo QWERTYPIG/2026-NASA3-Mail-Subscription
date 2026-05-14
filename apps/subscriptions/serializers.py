@@ -131,5 +131,14 @@ class AddAliasMemberSerializer(serializers.Serializer):
         if ldap_user is None:
             # This string maps directly to errorData.details.uid[0] in React
             raise serializers.ValidationError("此帳號不存在於 LDAP 系統中。")
+
+        allowed_gids = ["450", "400", "500", "200" ] #student, graduate, alumni, staff
+        user_gids = ldap_user.ldap_user.attrs.get("gidNumber", [])
+        user_gids_str = [
+            g.decode('utf-8') if isinstance(g, bytes) else str(g) 
+            for g in user_gids
+        ]
+        if not any(gid in allowed_gids for gid in user_gids_str):
+            raise serializers.ValidationError("此帳號的身份群組 (GID) 不具備加入別名的權限。")
             
         return uid
