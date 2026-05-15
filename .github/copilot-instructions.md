@@ -4,7 +4,9 @@
 
 ## Docs
 
-所有架構與技術決策文件在 `docs/`，從 [docs/architecture.md](./docs/architecture.md) 開始閱讀。
+所有架構與技術決策文件在 `docs/`。`docs/architecture.md` 包含整個 project 的技術框架（tech stack、data flows、doc index），每個 session 都應優先參考。
+
+@docs/architecture.md
 
 `progress/` 資料夾為組員自由記錄個人進度用，除非使用者明確要求，否則不得主動讀取或參考其內容。
 
