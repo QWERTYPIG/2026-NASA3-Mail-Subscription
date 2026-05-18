@@ -40,9 +40,11 @@ services:
       - DB_NAME=${DB_NAME:-Subscriptions}
       - DB_USER=${DB_USER:-MailAdmin}
       - DB_PASSWORD=${DB_PASSWORD:-password}
-      - DB_HOST=postgres
+      - DB_HOST=${DB_HOST:-postgres}
+
       - REDIS_QUEUE_URL=${REDIS_QUEUE_URL:-redis://redis:6379/0}
       - REDIS_CACHE_URL=${REDIS_CACHE_URL:-redis://redis:6379/1}
+      
       - LDAP_URI=${LDAP_URI:-ldap://localhost:389}
       - LDAP_BIND_DN=${LDAP_BIND_DN:-uid=mailtest,ou=people,dc=csie,dc=ntu,dc=edu,dc=tw}
       - LDAP_BIND_PASSWORD=${LDAP_BIND_PASSWORD:-}
@@ -68,9 +70,11 @@ services:
       - DB_NAME=${DB_NAME:-Subscriptions}
       - DB_USER=${DB_USER:-MailAdmin}
       - DB_PASSWORD=${DB_PASSWORD:-password}
-      - DB_HOST=postgres
-      - REDIS_QUEUE_URL=${REDIS_QUEUE_URL:-redis://redis:6379/0}
-      - REDIS_CACHE_URL=${REDIS_CACHE_URL:-redis://redis:6379/1}
+      - DB_HOST=${DB_HOST:-postgres}
+      
+      - REDIS_QUEUE_URL=redis://${DB_HOST:-postgres}:6379/0
+      - REDIS_CACHE_URL=redis://${DB_HOST:-postgres}:6379/1
+
       - LDAP_URI=${LDAP_URI:-ldap://localhost:389}
       - LDAP_BIND_DN=${LDAP_BIND_DN:-uid=mailtest,ou=people,dc=csie,dc=ntu,dc=edu,dc=tw}
       - LDAP_BIND_PASSWORD=${LDAP_BIND_PASSWORD:-}
@@ -98,7 +102,7 @@ services:
         - "${VITE_PORT:-55111}:${VITE_PORT:-55111}"
       environment:
         # This is the magic link between the containers
-        - VITE_API_TARGET=http://web:8000
+        - VITE_API_TARGET=${VITE_API_TARGET:-http://web:8000}
         - VITE_PORT=${VITE_PORT:-55111}
       networks:
         - mail_net
