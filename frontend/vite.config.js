@@ -17,6 +17,11 @@ export default defineConfig(({ mode }) => {
       port: parseInt(env.VITE_PORT) || 5173,
       strictPort: true,
       allowedHosts: true,
+      hmr: {
+        # Tells the browser to connect the WebSocket to Nginx on port 80, 
+        # which Nginx will then correctly proxy down to port 55111 internally.
+        clientPort: 80 
+      }
     }
   }
 })
