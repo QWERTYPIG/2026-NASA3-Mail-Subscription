@@ -31,9 +31,19 @@
 超過後放棄，task row 留在 queue 不刪除
 ```
 
+### 冪等處理
+
+部分 LDAP 結果代表**目標狀態已達成**，視為成功並刪除 task，不計入失敗：
+
+| 操作 | 冪等結果 | 說明 |
+|------|----------|------|
+| alias add | `LDAPEntryAlreadyExistsResult` | alias entry 已存在 |
+| user add | `LDAPAttributeOrValueExistsResult` | 成員已在 `uniqueMember` 中 |
+| user remove | `LDAPNoSuchAttributeResult` | 成員本來就不在 `uniqueMember` 中 |
+
 ### Failed Task 處理
 
-全部 retry 耗盡後，task row **保留在 queue**（不刪除）。由於 `alias_task_queue` 與 `user_task_queue` 都以 `id` 排序（`ordering = ['id']`），失敗的 task 在下一次 flush 時仍會排在最前面優先處理。
+全部 retry 耗盡且非冪等結果後，task row **保留在 queue**（不刪除）。由於 `alias_task_queue` 與 `user_task_queue` 都以 `id` 排序（`ordering = ['id']`），失敗的 task 在下一次 flush 時仍會排在最前面優先處理。
 
 ### Redis Lock（防止重疊執行）
 
@@ -68,9 +78,19 @@ Flush 完成、`user_task_queue` 清空後，立即執行一次 consistency chec
 
 ## 錯誤通知（Alert Email）
 
-當 worker 無法連上 LDAP server 時（`_connect()` 拋出 `LDAPException`），系統會透過 SMTP 寄送 alert email 給管理者，再重新拋出例外讓 `flush_ldap_tasks()` 的錯誤處理正常運作。
+系統在以下四個位置發送 alert email，收件人定義在 `apps/subscriptions/tasks.py` 的 `ALERT_RECIPIENTS`。
 
-收件人定義在 `apps/subscriptions/tasks.py` 的 `ALERT_RECIPIENTS`。
+| 觸發點 | 條件 | Subject |
+|--------|------|---------|
+| `_connect()` | 無法連上 LDAP server（`LDAPException`）| LDAP Connection Failure |
+| `flush_alias_tasks()` | 任何 alias task 耗盡所有 retry 後仍失敗 | LDAP Alias Task Failures |
+| `flush_user_tasks()` | 任何 user task 耗盡所有 retry 後仍失敗 | LDAP User Task Failures |
+| `run_consistency_check()` | LDAP search 或 DB 操作失敗 | LDAP Consistency Check Failure |
+| `flush_ldap_tasks()` | 其他預期外錯誤（Redis crash、cert 未設定等）| LDAP Flush Unexpected Error |
+
+`flush_alias_tasks` 與 `flush_user_tasks` 採**單次 flush 彙整一封信**的策略：所有失敗的 task 收集完後才寄出摘要，避免多個 task 失敗時發出大量信件。
+
+`_connect()` 與 `run_consistency_check()` 在送出 alert 後會重新拋出例外，讓 `flush_ldap_tasks()` 的錯誤處理正常運作。
 
 SMTP 設定由環境變數控制（見 [setup — 環境變數](./setup.md#環境變數)）。開發環境可搭配 Mailpit（`SMTP_PORT=1025`）攔截信件，不會實際寄出。
 

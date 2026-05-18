@@ -2,10 +2,13 @@
 
 系統使用系上 LDAP server 作為唯一的 source of truth。Django 透過 `django-auth-ldap` 進行身份驗證，Django-Q worker 負責所有對 `ou=Aliases` 的寫入操作。
 
-**LDAP URI：** `ldap://172.16.127.109:389`
+**LDAP URI：** `ldaps://172.16.127.109:636`（TLS，需提供 CA 憑證）
 
 > [!note] LDAP 是外部伺服器
 > LDAP server 由系上 identity service 組維護，不在 docker-compose 管理範圍內。`ou=group` 的新增／修改（如 `cn=mailAdmin` 成員管理）需聯繫 identity service 組，或由有 LDAP admin 權限的人員直接操作。
+
+> [!important] TLS 憑證為必填
+> 系統同時透過 `ldap3`（worker）與 `django-auth-ldap`（登入驗證）連線 LDAP，兩者皆強制 `CERT_REQUIRED`。若 `LDAP_CA_CERT_FILE` 環境變數未設定，worker 啟動時會拋出 `RuntimeError`，Django 啟動時則會在 `settings.py` 的 `assert` 處中止。CA 憑證（`ca.crt`）由 identity service 組提供。
 
 **Bind DN（mail 組使用帳號）：** `uid=mailtest,ou=people,dc=csie,dc=ntu,dc=edu,dc=tw`
 

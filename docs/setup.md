@@ -13,7 +13,10 @@
 | `DB_PASSWORD` | `password` | PostgreSQL 密碼 |
 | `REDIS_QUEUE_URL` | `redis://redis:6379/0` | Django-Q task queue |
 | `REDIS_CACHE_URL` | `redis://redis:6379/1` | Rate limit TTL cache |
-| `LDAP_URI` | `ldap://172.16.127.109:389` | LDAP server |
+| `LDAP_URI` | `ldaps://172.16.127.109:636` | LDAP server（TLS）|
+| `LDAP_CA_CERT_FILE` | （必填，無預設值）| LDAP CA 憑證絕對路徑，未設定則拒絕啟動 |
+| `LDAP_BIND_DN` | `uid=mailtest,ou=people,...` | LDAP 服務帳號 DN |
+| `LDAP_BIND_PASSWORD` | （必填）| LDAP 服務帳號密碼 |
 | `SMTP_HOST` | `localhost` | Alert email 用的 SMTP server |
 | `SMTP_PORT` | `25` | SMTP port（Mailpit 用 `1025`）|
 | `ALERT_EMAIL_SENDER` | `mailsub-alert@csie.ntu.edu.tw` | Alert email 寄件人 |

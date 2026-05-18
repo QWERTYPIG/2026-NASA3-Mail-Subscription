@@ -5,7 +5,12 @@ import time
 
 from django.core.cache import cache
 from ldap3 import LEVEL, MODIFY_ADD, MODIFY_DELETE, Connection, Server, Tls
-from ldap3.core.exceptions import LDAPEntryAlreadyExistsResult, LDAPException
+from ldap3.core.exceptions import (
+    LDAPAttributeOrValueExistsResult,
+    LDAPEntryAlreadyExistsResult,
+    LDAPException,
+    LDAPNoSuchAttributeResult,
+)
 
 from core.mail import send_alert_email
 
@@ -165,11 +170,25 @@ def flush_user_tasks(conn: Connection) -> None:
         member = _member_dn(task.user_uid)
         try:
             if task.action == "add":
-                _with_retry(conn.modify, dn, {"uniqueMember": [(MODIFY_ADD, [member])]})
+                try:
+                    _with_retry(conn.modify, dn, {"uniqueMember": [(MODIFY_ADD, [member])]})
+                except LDAPAttributeOrValueExistsResult:
+                    logger.info(
+                        "flush_user_tasks: %s already a member of %s, skipping add",
+                        task.user_uid,
+                        task.alias_name,
+                    )
             elif task.action == "remove":
-                _with_retry(
-                    conn.modify, dn, {"uniqueMember": [(MODIFY_DELETE, [member])]}
-                )
+                try:
+                    _with_retry(
+                        conn.modify, dn, {"uniqueMember": [(MODIFY_DELETE, [member])]}
+                    )
+                except LDAPNoSuchAttributeResult:
+                    logger.info(
+                        "flush_user_tasks: %s not a member of %s, skipping remove",
+                        task.user_uid,
+                        task.alias_name,
+                    )
 
             task.delete()
 
