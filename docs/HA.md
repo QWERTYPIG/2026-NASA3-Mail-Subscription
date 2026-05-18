@@ -16,4 +16,3 @@ Main machine is switched by changing `DB_HOST` in .env (TBD).
 
 ## Syncing (TBD)
 Need a worker to sync the two backup DBs with main DB.
-

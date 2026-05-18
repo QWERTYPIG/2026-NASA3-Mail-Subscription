@@ -4,24 +4,25 @@
 
 ## 環境變數
 
-在 `docker-compose.yml` 中設定，以下為預設值：
+在 `docker-compose.yml` 中設定，以下為預設值。實際可由 `.env` 覆蓋（`docker-compose.yml` 的 `env_file` 會讀取）。
 
 | 變數 | 預設值 | 說明 |
 |------|--------|------|
 | `DB_NAME` | `Subscriptions` | PostgreSQL 資料庫名稱 |
 | `DB_USER` | `MailAdmin` | PostgreSQL 使用者 |
 | `DB_PASSWORD` | `password` | PostgreSQL 密碼 |
+| `DB_HOST` | `postgres` | PostgreSQL host（HA 可改為主機 IP，如 `172.16.127.102`） |
 | `REDIS_QUEUE_URL` | `redis://redis:6379/0` | Django-Q task queue |
 | `REDIS_CACHE_URL` | `redis://redis:6379/1` | Rate limit TTL cache |
 | `LDAP_URI` | `ldaps://172.16.127.109:636` | LDAP server（TLS）|
-| `LDAP_CA_CERT_FILE` | （必填，無預設值）| LDAP CA 憑證絕對路徑，未設定則拒絕啟動 |
+| `LDAP_CA_CERT_FILE` | （必填，無預設值）| LDAP CA 憑證路徑（container 內可讀取），未設定則拒絕啟動 |
 | `LDAP_BIND_DN` | `uid=mailtest,ou=people,...` | LDAP 服務帳號 DN |
 | `LDAP_BIND_PASSWORD` | （必填）| LDAP 服務帳號密碼 |
 | `SMTP_HOST` | `localhost` | Alert email 用的 SMTP server |
 | `SMTP_PORT` | `25` | SMTP port（Mailpit 用 `1025`）|
 | `ALERT_EMAIL_SENDER` | `mailsub-alert@csie.ntu.edu.tw` | Alert email 寄件人 |
-| VITE_API_TARGET | http://mailsus.csie.org | Backend API service URL |
-| VITE_PORT | 55111 | Frontend development server port |
+| `VITE_API_TARGET` | `http://web:8000` | Backend API service URL（HA/外部部署可設為 `http://mailsus.csie.org`） |
+| `VITE_PORT` | `55111` | Frontend development server port（Vite） |
  
 
 > [!warning] Redis index 分開
