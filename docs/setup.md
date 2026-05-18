@@ -17,7 +17,7 @@
 | `SMTP_HOST` | `localhost` | Alert email 用的 SMTP server |
 | `SMTP_PORT` | `25` | SMTP port（Mailpit 用 `1025`）|
 | `ALERT_EMAIL_SENDER` | `mailsub-alert@csie.ntu.edu.tw` | Alert email 寄件人 |
-| VITE_API_TARGET | http://localhost:3011 | Backend API service URL |
+| VITE_API_TARGET | http://mailsus.csie.org | Backend API service URL |
 | VITE_PORT | 55111 | Frontend development server port |
  
 
