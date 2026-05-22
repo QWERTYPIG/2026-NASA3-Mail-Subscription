@@ -21,5 +21,5 @@ primary to the other two machines every 10 minutes using `pg_dump` and
 
 - Script: [scripts/db_sync.sh](scripts/db_sync.sh)
 - Primary discovery: `DB_HOST` in `.env` on the worker machine
-- Targets: `DB_REPLICA_HOSTS` (comma-separated list of mail1, mail2, mail3)
+- Targets: `DB_REPLICA_HOSTS` (comma-separated list of the mail1/2/3 IPs)
 - Trigger: parent scheduler runs the script every 10 minutes

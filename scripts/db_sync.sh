@@ -29,8 +29,12 @@ if [[ -z "$PRIMARY_HOST" ]]; then
   exit 1
 fi
 
-DEFAULT_REPLICA_HOSTS="172.16.127.102,172.16.127.116,172.16.127.117"
-REPLICA_HOSTS=${DB_REPLICA_HOSTS:-$DEFAULT_REPLICA_HOSTS}
+REPLICA_HOSTS=${DB_REPLICA_HOSTS:-}
+
+if [[ -z "$REPLICA_HOSTS" ]]; then
+  echo "DB_REPLICA_HOSTS is not set. Provide it in .env or the environment." >&2
+  exit 1
+fi
 
 if ! command -v pg_dump >/dev/null || ! command -v pg_restore >/dev/null || ! command -v psql >/dev/null; then
   echo "pg_dump, pg_restore, and psql must be installed on this machine." >&2
