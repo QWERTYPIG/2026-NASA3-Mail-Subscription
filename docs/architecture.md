@@ -49,7 +49,7 @@
 
 ### Background Sync (Django-Q worker)
 ```
-① Django-Q  →  flush alias task queue   →  LDAP ou=Aliases  (每 3 分鐘)
+① Django-Q  →  flush alias task queue   →  LDAP ou=Aliases  (每 30 分鐘)
 ② Django-Q  →  flush user task queue    →  LDAP ou=Aliases  (同一排程，alias 先)
 ③ Django-Q  →  consistency check        →  LDAP vs PostgreSQL  (flush 結束後立即執行)
 ```
