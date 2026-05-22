@@ -143,3 +143,56 @@ class Monitor:
         self._last_freshness_warning = 0.0
         self._last_no_active_warning = 0.0
         self._last_sync_file_warning = 0.0
+
+    def start_health_server(self) -> None:
+        """Start the HTTP health server in a background thread."""
+        monitor = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:  # noqa: N802
+                """Serve the /health endpoint with worker readiness details."""
+                if self.path != "/health":
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+
+                worker_running, db_sync_ready = monitor.local_worker_health()
+                payload = {
+                    "worker_running": worker_running,
+                    "db_sync_ready": db_sync_ready,
+                }
+                body = json.dumps(payload).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, format: str, *args: object) -> None:
+                """Route HTTP handler logs through the logging module."""
+                logging.info("health: " + format, *args)
+
+        self._server = ThreadingHTTPServer(("", self.config.monitor_port), Handler)
+        self._server_thread = threading.Thread(
+            target=self._server.serve_forever, daemon=True
+        )
+        self._server_thread.start()
+        logging.info("health endpoint listening on :%s", self.config.monitor_port)
+
+    def stop(self) -> None:
+        """Signal the main loop and HTTP server to stop."""
+        self._stop_event.set()
+        if self._server:
+            self._server.shutdown()
+
+    def run(self) -> None:
+        """Run the monitor loop until a stop signal is received."""
+        self.start_health_server()
+        logging.info("monitor loop starting with peers=%s", ",".join(self.config.peers))
+
+        while not self._stop_event.is_set():
+            loop_start = time.time()
+            self.run_once()
+            elapsed = time.time() - loop_start
+            sleep_for = max(0.0, self.config.check_interval - elapsed)
+            self._stop_event.wait(timeout=sleep_for)
