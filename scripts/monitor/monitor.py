@@ -124,3 +124,22 @@ def tcp_reachable(host: str, port: int, timeout: float) -> bool:
             return True
     except OSError:
         return False
+
+
+class Monitor:
+    def __init__(self, config: Config) -> None:
+        """Initialize monitor state and caches."""
+        self.config = config
+        self._compose_lock = threading.Lock()
+        self._stop_event = threading.Event()
+        self._server: ThreadingHTTPServer | None = None
+        self._server_thread: threading.Thread | None = None
+        self._last_active: str | None = None
+        self._candidate_active: str | None = None
+        self._candidate_count = 0
+        self._no_peer_count = 0
+        self._degraded_mode = False
+        self._health_cache: tuple[float, bool, bool] | None = None
+        self._last_freshness_warning = 0.0
+        self._last_no_active_warning = 0.0
+        self._last_sync_file_warning = 0.0
