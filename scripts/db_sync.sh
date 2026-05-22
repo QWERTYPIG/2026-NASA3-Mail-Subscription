@@ -1,21 +1,28 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Load .env if present. Keep parsing minimal and predictable.
-ENV_FILE=${ENV_FILE:-.env}
-if [[ -f "$ENV_FILE" ]]; then
+load_env_file() {
+  local file_path="$1"
+  [[ -z "$file_path" || ! -f "$file_path" ]] && return 0
   while IFS= read -r line; do
     [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
     if [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
       export "$line"
     fi
-  done < "$ENV_FILE"
-fi
+  done < "$file_path"
+}
+
+# Load base env, then role overrides.
+ENV_FILE=${ENV_FILE:-.env}
+ENV_ROLE=${ENV_ROLE:-.env.role}
+load_env_file "$ENV_FILE"
+load_env_file "$ENV_ROLE"
 
 DB_NAME=${DB_NAME:-Subscriptions}
 DB_USER=${DB_USER:-MailAdmin}
 DB_PASSWORD=${DB_PASSWORD:-password}
 PRIMARY_HOST=${DB_HOST:-}
+LAST_SYNC_FILE=${LAST_SYNC_FILE:-}
 
 if [[ -z "$PRIMARY_HOST" ]]; then
   echo "DB_HOST is not set. Provide it in .env or the environment." >&2
@@ -63,5 +70,10 @@ for host in "${HOSTS[@]}"; do
     "$DUMP_FILE"
 
 done
+
+if [[ -n "$LAST_SYNC_FILE" ]]; then
+  mkdir -p "$(dirname "$LAST_SYNC_FILE")"
+  date +%s > "$LAST_SYNC_FILE"
+fi
 
 unset PGPASSWORD
