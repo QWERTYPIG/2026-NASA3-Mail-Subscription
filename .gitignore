@@ -2,3 +2,4 @@
 __pycache__
 .DS_Store
 **/.obsidian/
+mockldap_ca.crt
