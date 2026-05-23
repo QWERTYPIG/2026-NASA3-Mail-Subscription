@@ -131,6 +131,23 @@ class FlushLdapTasksTest(TestCase):
         flush_ldap_tasks()
         mock_cache.delete.assert_called_once()
 
+    @patch.dict("os.environ", {"FLUSH_ENABLED": "0"})
+    @patch("apps.subscriptions.tasks._connect")
+    def test_skips_when_flush_disabled(self, mock_connect):
+        from .tasks import flush_ldap_tasks
+        flush_ldap_tasks()
+        mock_connect.assert_not_called()
+
+    @patch.dict("os.environ", {"FLUSH_ENABLED": "1"})
+    @patch("apps.subscriptions.tasks._connect")
+    @patch("apps.subscriptions.tasks.cache")
+    def test_runs_when_flush_enabled(self, mock_cache, mock_connect):
+        mock_cache.add.return_value = True
+        mock_connect.return_value = MagicMock()
+        from .tasks import flush_ldap_tasks
+        flush_ldap_tasks()
+        mock_connect.assert_called_once()
+
 
 class AliasListApiTest(TestCase):
     def setUp(self):
