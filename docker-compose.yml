@@ -15,6 +15,11 @@ services:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - mail_net
+    logging:
+      driver: syslog
+      options:
+        syslog-address: "unixgram:///dev/log"
+        tag: "docker-mailsub-{{.Name}}"
 
   # 2. The Message Broker & Cache
   redis:
@@ -26,6 +31,11 @@ services:
       - redis_data:/data
     networks:
       - mail_net
+    logging:
+      driver: syslog
+      options:
+        syslog-address: "unixgram:///dev/log"
+        tag: "docker-mailsub-{{.Name}}"
 
   # 3. The API Gateway (Web Server)
   web:
@@ -58,6 +68,11 @@ services:
       - redis
     networks:
       - mail_net
+    logging:
+      driver: syslog
+      options:
+        syslog-address: "unixgram:///dev/log"
+        tag: "docker-mailsub-{{.Name}}"
 
   # 4. The Background Worker (Django-Q)
   worker:
@@ -89,6 +104,11 @@ services:
       - redis
     networks:
       - mail_net
+    logging:
+      driver: syslog
+      options:
+        syslog-address: "unixgram:///dev/log"
+        tag: "docker-mailsub-{{.Name}}"
 
   #frontend interface (React)
   frontend:
@@ -109,6 +129,11 @@ services:
         - mail_net
       depends_on:
         - web
+      logging:
+        driver: syslog
+        options:
+          syslog-address: "unixgram:///dev/log"
+          tag: "docker-mailsub-{{.Name}}"
 
 volumes:
   postgres_data:

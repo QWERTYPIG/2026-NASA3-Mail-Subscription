@@ -8,6 +8,7 @@
 ```
 # 1. Frontend Pool (React/Vite on port 55111)
 upstream mail_frontend {
+    ip_hash;
     server 172.16.127.102:55111 max_fails=3 fail_timeout=30s;
     server 172.16.127.116:55111 max_fails=3 fail_timeout=30s;
     server 172.16.127.117:55111 max_fails=3 fail_timeout=30s;
