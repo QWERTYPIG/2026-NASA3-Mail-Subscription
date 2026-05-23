@@ -178,3 +178,4 @@ docker compose exec -T worker scripts/db_sync.sh
 - `/health` 僅限內網使用，不應公開對外。
 - `.env.role` 必須由 web/worker 的 `env_file` 載入。
 - 若 `LAST_SYNC_FILE` 未設定，monitor 會跳過 DB sync 排程並記錄警告。
+- `LAST_SYNC_FILE` 的目錄需 bind-mount 到 worker（`LAST_SYNC_DIR`），否則 host 端無法讀到同步時間更新。

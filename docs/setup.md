@@ -13,6 +13,7 @@
 | `DB_PASSWORD` | `password` | PostgreSQL 密碼 |
 | `DB_HOST` | `postgres` | PostgreSQL host（HA 可改為主機 IP，如 `172.16.127.102`） |
 | `DB_REPLICA_HOSTS` | （無預設） | DB sync 目標（逗號分隔，HA 必填） |
+| `LAST_SYNC_DIR` | `/var/lib/mailsub` | `LAST_SYNC_FILE` 所在的 host 目錄（供 bind-mount） |
 | `REDIS_QUEUE_URL` | `redis://redis:6379/0` | Django-Q task queue |
 | `REDIS_CACHE_URL` | `redis://redis:6379/1` | Rate limit TTL cache |
 | `FLUSH_ENABLED` | `1` | LDAP flush 開關（由 monitor 寫入 `.env.role`） |
@@ -46,6 +47,9 @@ monitor 透過 `/etc/mailsub/monitor.env` 讀取設定，常見項目：
 - `SYNC_INTERVAL`, `LAST_SYNC_FILE`
 
 詳細行為與理由請見 [monitor](./monitor.md)。
+
+> [!note]
+> `LAST_SYNC_FILE` 由 worker container 寫入，因此需在 `docker-compose.yml` 以 `LAST_SYNC_DIR` 進行 bind-mount，並確保 `LAST_SYNC_DIR` 與 `LAST_SYNC_FILE` 的目錄一致。
 
 ### 安裝 monitor daemon（每台 mail1/2/3）
 

@@ -63,6 +63,7 @@ services:
     command: python manage.py qcluster
     volumes:
       - .:/app
+      - ${LAST_SYNC_DIR:-/var/lib/mailsub}:${LAST_SYNC_DIR:-/var/lib/mailsub}
     environment:
       - DB_NAME=${DB_NAME:-Subscriptions}
       - DB_USER=${DB_USER:-MailAdmin}
