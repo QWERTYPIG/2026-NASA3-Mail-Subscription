@@ -47,6 +47,41 @@ monitor 透過 `/etc/mailsub/monitor.env` 讀取設定，常見項目：
 
 詳細行為與理由請見 [monitor](./monitor.md)。
 
+### 安裝 monitor daemon（每台 mail1/2/3）
+
+**1. 建立設定目錄並寫入設定檔**
+
+```bash
+sudo mkdir -p /etc/mailsub
+sudo install -m 0640 scripts/monitor/monitor.env.example /etc/mailsub/monitor.env
+```
+
+編輯 `/etc/mailsub/monitor.env`，至少修改：
+- `THIS_MACHINE_IP`：本機 IP
+- `THIS_MACHINE_NAME`：本機名稱（mail1 / mail2 / mail3）
+- `MONITOR_PEERS`：依優先序排列（mail1 IP 排最前）
+
+**2. 安裝 systemd service**
+
+```bash
+sudo install -m 0644 scripts/monitor/mailsub-monitor.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now mailsub-monitor
+```
+
+**3. 確認服務狀態**
+
+```bash
+sudo systemctl status mailsub-monitor
+sudo journalctl -u mailsub-monitor -f
+```
+
+健康檢查端點（供確認）：
+
+```bash
+curl http://127.0.0.1:9123/health
+```
+
 ---
 
 ## Docker 網路設定
