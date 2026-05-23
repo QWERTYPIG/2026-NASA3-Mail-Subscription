@@ -28,6 +28,8 @@ class Config:
     compose_file: str
     env_base: str
     env_role: str
+    db_name: str
+    db_user: str
     last_sync_file: str | None
     pg_port: int
     redis_port: int
@@ -100,6 +102,8 @@ def load_config() -> Config:
         compose_file=require("COMPOSE_FILE"),
         env_base=require("ENV_BASE"),
         env_role=require("ENV_ROLE"),
+        db_name=os.environ.get("DB_NAME", "Subscriptions"),
+        db_user=os.environ.get("DB_USER", "MailAdmin"),
         last_sync_file=os.environ.get("LAST_SYNC_FILE"),
         pg_port=int(os.environ.get("PG_PORT", "5432")),
         redis_port=int(os.environ.get("REDIS_PORT", "6379")),
@@ -264,6 +268,16 @@ class Monitor:
                 if now - self._last_freshness_warning > 60:
                     logging.warning("failback blocked: last sync too old or missing.")
                     self._last_freshness_warning = now
+                self._candidate_active = None
+                self._candidate_count = 0
+                self.maybe_run_db_sync(self._last_active)
+                return
+
+        if desired_active == self.config.this_ip:
+            if not self.local_postgres_writable():
+                logging.warning(
+                    "local postgres not writable; aborting ACTIVE transition."
+                )
                 self._candidate_active = None
                 self._candidate_count = 0
                 self.maybe_run_db_sync(self._last_active)
@@ -480,6 +494,34 @@ class Monitor:
             )
             return False
         return True
+
+    def local_postgres_writable(self) -> bool:
+        """Return True if the local Postgres instance is writable."""
+        cmd = [
+            "exec",
+            "-T",
+            "postgres",
+            "psql",
+            "-U",
+            self.config.db_user,
+            "-d",
+            self.config.db_name,
+            "-Atc",
+            "SELECT pg_is_in_recovery();",
+        ]
+        result = self.run_compose(cmd, timeout=30)
+        if result is None:
+            return False
+        if result.returncode != 0:
+            logging.warning(
+                "local postgres writability check failed: %s", result.stderr.strip()
+            )
+            return False
+        status = result.stdout.strip().lower()
+        if status in {"f", "false"}:
+            return True
+        logging.warning("local postgres is read-only (pg_is_in_recovery=%s)", status)
+        return False
 
     def apply_role(self, active_ip: str) -> None:
         """Write role env and restart web/worker containers."""
