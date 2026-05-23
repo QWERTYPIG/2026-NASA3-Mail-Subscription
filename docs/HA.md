@@ -36,6 +36,28 @@ monitor 會在每台機器寫入 `.env.role`：
 
 ---
 
+## Failover / Failback 規則
+
+ACTIVE = **優先序最高**且 core services（PostgreSQL、Redis、worker、DB sync）**全部健康**的機器。優先序以 `MONITOR_PEERS` 順序為準（預設 mail1 > mail2 > mail3）。
+
+### 穩定門檻
+
+| 情況 | 門檻 | 說明 |
+|------|------|------|
+| Failover（降級切換） | `FAIL_THRESHOLD`（預設 3） | 連續 N 次檢查失敗才切走 |
+| Failback（恢復切回） | `RECOVER_THRESHOLD`（預設 2） | 連續 M 次檢查成功才切回 |
+
+### Peer Fence（防 split-brain）
+
+通常需至少一台 peer monitor 可達才允許自我啟動。若無 peer 可達：
+
+- 如果本機已是 ACTIVE：繼續維持（推斷另外兩台都掛了）。
+- 如果本機非 ACTIVE：等待 `DEGRADED_THRESHOLD`（預設 8 次，約 2 分鐘）後才允許自啟動（**降級模式**），避免全站停擺。
+
+### Failback 新鮮度
+
+高優先序機器恢復後，切回前需確認 `LAST_SYNC_FILE` 年齡 ≤ `2 × SYNC_INTERVAL`（預設 20 分鐘）。若資料過舊，failback 暫停並記錄警告。
+
 ## DB/Redis 與 failover
 
 - ACTIVE 必須同時通過 DB、Redis、worker、DB sync 健康檢查。
