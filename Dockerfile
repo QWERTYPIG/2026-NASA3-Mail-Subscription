@@ -1,5 +1,5 @@
 # Use a lightweight Python base image
-FROM python:3.11-slim
+FROM python:3.11-slim-bookworm
 
 # Prevent Python from writing .pyc files to disc
 ENV PYTHONDONTWRITEBYTECODE 1
@@ -16,7 +16,7 @@ RUN apt-get update \
         libpq-dev \
         libldap2-dev \
         libsasl2-dev \
-        postgresql-client \
+        postgresql-client-15 \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
