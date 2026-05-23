@@ -14,6 +14,7 @@
 | `DB_HOST` | `postgres` | PostgreSQL host（HA 可改為主機 IP，如 `172.16.127.102`） |
 | `DB_REPLICA_HOSTS` | （無預設） | DB sync 目標（逗號分隔，HA 必填） |
 | `LAST_SYNC_DIR` | `/var/lib/mailsub` | `LAST_SYNC_FILE` 所在的 host 目錄（供 bind-mount） |
+| `PG_MAJOR` | `15` | PostgreSQL client 版本（pg_dump/pg_restore） |
 | `REDIS_QUEUE_URL` | `redis://redis:6379/0` | Django-Q task queue |
 | `REDIS_CACHE_URL` | `redis://redis:6379/1` | Rate limit TTL cache |
 | `FLUSH_ENABLED` | `1` | LDAP flush 開關（由 monitor 寫入 `.env.role`） |

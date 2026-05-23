@@ -1,6 +1,8 @@
 # Use a lightweight Python base image
 FROM python:3.11-slim-bookworm
 
+ARG PG_MAJOR=15
+
 # Prevent Python from writing .pyc files to disc
 ENV PYTHONDONTWRITEBYTECODE 1
 # Prevent Python from buffering stdout/stderr
@@ -16,7 +18,7 @@ RUN apt-get update \
         libpq-dev \
         libldap2-dev \
         libsasl2-dev \
-        postgresql-client-15 \
+        postgresql-client-${PG_MAJOR} \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
