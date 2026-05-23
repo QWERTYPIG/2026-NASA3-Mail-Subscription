@@ -16,6 +16,7 @@ RUN apt-get update \
         libpq-dev \
         libldap2-dev \
         libsasl2-dev \
+        postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
