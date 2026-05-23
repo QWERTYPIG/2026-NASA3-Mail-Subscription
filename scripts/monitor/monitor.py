@@ -219,11 +219,15 @@ class Monitor:
 
         if desired_active is None:
             now = time.time()
+            # Avoid too frequent logging
             if now - self._last_no_active_warning > 60:
                 logging.warning("no eligible ACTIVE; keeping current role.")
                 self._last_no_active_warning = now
             self._candidate_active = None
             self._candidate_count = 0
+            # Assume local machine is ACTIVE but Redis bye-bye for 5 sec
+            # local machine become unhealthy -> desired_active is none
+            # However before handing out ACTIVE flag, we should still try to do DB sync
             self.maybe_run_db_sync(self._last_active)
             return
 
@@ -273,3 +277,350 @@ class Monitor:
         logging.info("ACTIVE transition %s -> %s", old_active, desired_active)
         self.apply_role(desired_active)
         self.maybe_run_db_sync(self._last_active)
+
+    def apply_peer_fence(
+        self, desired_active: str | None, any_peer_reachable: bool
+    ) -> str | None:
+        """Apply peer-reachability fencing and degraded-mode rules."""
+        # This means that there exists peer with healthy service and healthy priority
+        # -> just use it
+        if desired_active != self.config.this_ip:
+            return desired_active
+
+        # Since exist reachable peer we can infer that it is not this machine who's disconnected
+        if any_peer_reachable:
+            return desired_active
+
+        # This machine is currently ACTIVE
+        if self._last_active == self.config.this_ip:
+            # Cannot connect to any peer but I'm ACTIVE before disconnecting
+            # We infer that other two machines down thus we stay ACTIVE with degraded mode
+            if (
+                self._no_peer_count >= self.config.degraded_threshold
+                and not self._degraded_mode
+            ):
+                logging.warning("no peers reachable; staying ACTIVE in degraded mode.")
+                self._degraded_mode = True
+            return desired_active
+
+        # No peer reachable, wait more time to determine whether to enter degraded mode
+        if self._no_peer_count < self.config.degraded_threshold:
+            if self._no_peer_count == 1:
+                logging.warning(
+                    "no peers reachable; deferring self-activation until degraded threshold."
+                )
+            return None
+
+        # Enter degraded mode
+        if not self._degraded_mode:
+            logging.warning(
+                "no peers reachable; entering degraded mode for self-activation."
+            )
+            self._degraded_mode = True
+        return desired_active
+
+    def determine_active(self, statuses: dict[str, PeerStatus]) -> str | None:
+        """Return the highest-priority peer that is core-healthy."""
+        for ip in self.config.peers:
+            status = statuses.get(ip)
+            if status and status.core_healthy:
+                return ip
+        return None
+
+    def required_threshold(self, last_active: str | None, desired_active: str) -> int:
+        """Choose the stabilization threshold for a role transition."""
+        if last_active is None:
+            return self.config.recover_threshold
+
+        if self.is_failback(last_active, desired_active):
+            return self.config.recover_threshold
+
+        return self.config.fail_threshold
+
+    def is_failback(self, last_active: str | None, desired_active: str) -> bool:
+        """Return True when switching to a higher-priority peer."""
+        if last_active is None:
+            return False
+
+        # dict [ip: priority]
+        priority = {ip: idx for idx, ip in enumerate(self.config.peers)}
+
+        # Maybe misconfiguration in MONITOR_PEERS
+        if last_active not in priority or desired_active not in priority:
+            return False
+        return priority[desired_active] < priority[last_active]
+
+    def is_sync_fresh(self) -> bool:
+        """Return True if the last DB sync is within the freshness window."""
+        if not self.config.last_sync_file:
+            return False
+        try:
+            with open(self.config.last_sync_file, "r", encoding="utf-8") as handle:
+                raw = handle.read().strip()
+        except FileNotFoundError:
+            return False
+        except OSError as exc:
+            logging.warning("failed to read LAST_SYNC_FILE: %s", exc)
+            return False
+
+        if not raw.isdigit():
+            logging.warning("LAST_SYNC_FILE contains invalid timestamp: %s", raw)
+            return False
+
+        last_sync = int(raw)
+        age = time.time() - last_sync
+
+        # Allow the DB sync with age two times of sync interval
+        return age <= self.config.sync_interval * 2
+
+    def collect_peer_statuses(self) -> dict[str, PeerStatus]:
+        """Gather health details for all peers and return a status map."""
+        statuses: dict[str, PeerStatus] = {}
+        local_worker_running, local_db_sync_ready = self.local_worker_health()
+
+        for ip in self.config.peers:
+            pg_ok = tcp_reachable(ip, self.config.pg_port, self.config.tcp_timeout)
+            redis_ok = tcp_reachable(
+                ip, self.config.redis_port, self.config.tcp_timeout
+            )
+
+            if ip == self.config.this_ip:
+                status = PeerStatus(
+                    ip=ip,
+                    pg_ok=pg_ok,
+                    redis_ok=redis_ok,
+                    monitor_reachable=True,
+                    worker_running=local_worker_running,
+                    db_sync_ready=local_db_sync_ready,
+                )
+            else:
+                # 戳 /health api provided by monitor peer
+                health = self.fetch_peer_health(ip)
+                monitor_reachable = health is not None
+                worker_running = bool(health.get("worker_running")) if health else False
+                db_sync_ready = bool(health.get("db_sync_ready")) if health else False
+                status = PeerStatus(
+                    ip=ip,
+                    pg_ok=pg_ok,
+                    redis_ok=redis_ok,
+                    monitor_reachable=monitor_reachable,
+                    worker_running=worker_running,
+                    db_sync_ready=db_sync_ready,
+                )
+
+            statuses[ip] = status
+
+        return statuses
+
+    def local_worker_health(self) -> tuple[bool, bool]:
+        """Check local worker running state and db sync readiness."""
+        now = time.time()
+
+        # If previous worker health check is less than 3 sec ago, then just use cache
+        # since docker compose command is time consuming
+        if self._health_cache and (now - self._health_cache[0]) < 3:
+            _, worker_running, db_sync_ready = self._health_cache
+            return worker_running, db_sync_ready
+
+        # Use `docker compose ps` to see if worker is running
+        worker_running = self.compose_service_running("worker")
+        if not worker_running:
+            self._health_cache = (now, False, False)
+            return False, False
+
+        # Check if DB is ok then return packed info
+        db_sync_ready = self.worker_db_sync_ready()
+        self._health_cache = (now, worker_running, db_sync_ready)
+        return worker_running, db_sync_ready
+
+    def fetch_peer_health(self, ip: str) -> dict[str, object] | None:
+        """Fetch /health JSON from a peer monitor."""
+        url = f"http://{ip}:{self.config.monitor_port}/health"
+        try:
+            with request.urlopen(url, timeout=self.config.health_timeout) as response:
+                if response.status != 200:
+                    return None
+                data = json.loads(response.read().decode("utf-8"))
+                if not isinstance(data, dict):
+                    return None
+                return data
+        except (error.URLError, TimeoutError, json.JSONDecodeError):
+            return None
+
+    def compose_service_running(self, service: str) -> bool:
+        """Return True if the docker compose service is running."""
+        result = self.run_compose(
+            ["ps", "--services", "--status", "running"], timeout=10
+        )
+        if result is None:
+            return False
+        if result.returncode != 0:
+            logging.warning("docker compose ps failed: %s", result.stderr.strip())
+            return False
+        running = result.stdout.split()
+        return service in running
+
+    def worker_db_sync_ready(self) -> bool:
+        """Check db_sync prerequisites inside the worker container."""
+        # This command check if DB sync script exist and every tool the script required is prepared
+        cmd = [
+            "exec",
+            "-T",
+            "worker",
+            "sh",
+            "-lc",
+            "test -f scripts/db_sync.sh && command -v pg_dump >/dev/null && command -v pg_restore >/dev/null && command -v psql >/dev/null",
+        ]
+        result = self.run_compose(cmd, timeout=30)
+        if result is None:
+            return False
+        if result.returncode != 0:
+            logging.warning(
+                "worker db sync readiness check failed: %s", result.stderr.strip()
+            )
+            return False
+        return True
+
+    def apply_role(self, active_ip: str) -> None:
+        """Write role env and restart web/worker containers."""
+        role_env = self.build_role_env(active_ip)
+        changed = self.write_env_role(role_env)
+        if changed:
+            logging.info("wrote role env file %s", self.config.env_role)
+        else:
+            logging.info("role env unchanged at %s", self.config.env_role)
+
+        result = self.run_compose(
+            ["up", "-d", "--force-recreate", "web", "worker"],
+            timeout=120,
+        )
+        if result is None:
+            return
+        if result.returncode != 0:
+            logging.warning("docker compose up failed: %s", result.stderr.strip())
+
+    def build_role_env(self, active_ip: str) -> list[str]:
+        """Build the .env.role content for the selected ACTIVE host."""
+        flush_enabled = "1" if active_ip == self.config.this_ip else "0"
+        lines = [
+            "# Role-specific overrides written by the monitor",
+            f"DB_HOST={active_ip}",
+            f"REDIS_QUEUE_URL=redis://{active_ip}:6379/0",
+            f"REDIS_CACHE_URL=redis://{active_ip}:6379/1",
+            f"FLUSH_ENABLED={flush_enabled}",
+        ]
+        if self.config.last_sync_file:
+            lines.append(f"LAST_SYNC_FILE={self.config.last_sync_file}")
+        return lines
+
+    def write_env_role(self, lines: list[str]) -> bool:
+        """Write .env.role atomically and return True if changed."""
+        new_content = "\n".join(lines) + "\n"
+        existing = ""
+        try:
+            with open(self.config.env_role, "r", encoding="utf-8") as handle:
+                existing = handle.read()
+        except FileNotFoundError:
+            existing = ""
+        except OSError as exc:
+            logging.warning("failed to read env role file: %s", exc)
+
+        if existing == new_content:
+            return False
+
+        directory = os.path.dirname(self.config.env_role) or "."
+        os.makedirs(directory, exist_ok=True)
+        
+        # The implementation below makes file content replacement become atomic
+        # This avoid .env.role broken while writing into it
+        with tempfile.NamedTemporaryFile(
+            "w", delete=False, dir=directory, encoding="utf-8"
+        ) as handle:
+            handle.write(new_content)
+            temp_name = handle.name
+        os.replace(temp_name, self.config.env_role)
+        return True
+
+    def maybe_run_db_sync(self, current_active: str | None) -> None:
+        """Trigger db_sync.sh if this host is ACTIVE and due."""
+        if current_active != self.config.this_ip:
+            return
+
+        # Abort DB sync scheduling if LAST_SYNC_FILE is misconfigured
+        if not self.config.last_sync_file:
+            now = time.time()
+            if now - self._last_sync_file_warning > 60:
+                logging.warning("LAST_SYNC_FILE not set; skip DB sync scheduling.")
+                self._last_sync_file_warning = now
+            return
+
+        last_sync = self.read_last_sync_timestamp()
+        now = time.time()
+        if last_sync and (now - last_sync) < self.config.sync_interval:
+            return
+
+        logging.info("triggering db_sync.sh")
+        result = self.run_compose(
+            ["exec", "-T", "worker", "scripts/db_sync.sh"], timeout=600
+        )
+        if result is None:
+            return
+        if result.returncode != 0:
+            logging.warning("db_sync.sh failed: %s", result.stderr.strip())
+
+    def read_last_sync_timestamp(self) -> int | None:
+        """Read the last sync timestamp from LAST_SYNC_FILE."""
+        if not self.config.last_sync_file:
+            return None
+        try:
+            with open(self.config.last_sync_file, "r", encoding="utf-8") as handle:
+                raw = handle.read().strip()
+        except FileNotFoundError:
+            return None
+        except OSError as exc:
+            logging.warning("failed to read LAST_SYNC_FILE: %s", exc)
+            return None
+        if not raw.isdigit():
+            logging.warning("LAST_SYNC_FILE contains invalid timestamp: %s", raw)
+            return None
+        return int(raw)
+
+    def run_compose(
+        self, args: list[str], timeout: int
+    ) -> subprocess.CompletedProcess[str] | None:
+        """Run a docker compose command with a process lock."""
+        cmd = ["docker", "compose", "-f", self.config.compose_file] + args
+        try:
+            with self._compose_lock:
+                return subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                    check=False,
+                )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            logging.warning("docker compose command failed: %s", exc)
+            return None
+
+
+def main() -> None:
+    """Monitor entrypoint that wires logging, config, and signals."""
+    setup_logging(os.environ.get("LOG_LEVEL", "INFO"))
+    config = load_config()
+
+    monitor = Monitor(config)
+
+    def handle_signal(signum: int, _frame: object) -> None:
+        """Handle SIGTERM/SIGINT by stopping the monitor."""
+        logging.info("received signal %s; stopping monitor.", signum)
+        monitor.stop()
+
+    signal.signal(signal.SIGTERM, handle_signal)
+    signal.signal(signal.SIGINT, handle_signal)
+
+    monitor.run()
+
+
+if __name__ == "__main__":
+    main()
