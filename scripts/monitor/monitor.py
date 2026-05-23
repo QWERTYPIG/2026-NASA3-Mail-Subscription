@@ -196,3 +196,80 @@ class Monitor:
             elapsed = time.time() - loop_start
             sleep_for = max(0.0, self.config.check_interval - elapsed)
             self._stop_event.wait(timeout=sleep_for)
+
+    def run_once(self) -> None:
+        """Execute one monitoring cycle of checks and role transitions."""
+        statuses = self.collect_peer_statuses()
+        any_peer_reachable = any(
+            status.monitor_reachable
+            for ip, status in statuses.items()
+            if ip != self.config.this_ip
+        )
+
+        if any_peer_reachable:
+            if self._degraded_mode:
+                logging.warning("peer reachability restored; exiting degraded mode.")
+            self._degraded_mode = False
+            self._no_peer_count = 0
+        else:
+            self._no_peer_count += 1
+
+        desired_active = self.determine_active(statuses)
+        desired_active = self.apply_peer_fence(desired_active, any_peer_reachable)
+
+        if desired_active is None:
+            now = time.time()
+            if now - self._last_no_active_warning > 60:
+                logging.warning("no eligible ACTIVE; keeping current role.")
+                self._last_no_active_warning = now
+            self._candidate_active = None
+            self._candidate_count = 0
+            self.maybe_run_db_sync(self._last_active)
+            return
+
+        if desired_active == self._last_active:
+            self._candidate_active = None
+            self._candidate_count = 0
+            self.maybe_run_db_sync(self._last_active)
+            return
+
+        if self._candidate_active == desired_active:
+            self._candidate_count += 1
+        else:
+            self._candidate_active = desired_active
+            self._candidate_count = 1
+
+        required = self.required_threshold(self._last_active, desired_active)
+        logging.info(
+            "candidate ACTIVE=%s (%s/%s)",
+            desired_active,
+            self._candidate_count,
+            required,
+        )
+
+        if self._candidate_count < required:
+            self.maybe_run_db_sync(self._last_active)
+            return
+
+        if (
+            self.is_failback(self._last_active, desired_active)
+            and desired_active == self.config.this_ip
+        ):
+            if not self.is_sync_fresh():
+                now = time.time()
+                if now - self._last_freshness_warning > 60:
+                    logging.warning("failback blocked: last sync too old or missing.")
+                    self._last_freshness_warning = now
+                self._candidate_active = None
+                self._candidate_count = 0
+                self.maybe_run_db_sync(self._last_active)
+                return
+
+        old_active = self._last_active
+        self._last_active = desired_active
+        self._candidate_active = None
+        self._candidate_count = 0
+
+        logging.info("ACTIVE transition %s -> %s", old_active, desired_active)
+        self.apply_role(desired_active)
+        self.maybe_run_db_sync(self._last_active)
