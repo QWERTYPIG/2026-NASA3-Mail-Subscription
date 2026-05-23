@@ -130,10 +130,10 @@ services:
       depends_on:
         - web
       logging:
-      driver: syslog
-      options:
-        syslog-address: "unixgram:///dev/log"
-        tag: "docker-mailsub-{{.Name}}"
+        driver: syslog
+        options:
+          syslog-address: "unixgram:///dev/log"
+          tag: "docker-mailsub-{{.Name}}"
 
 volumes:
   postgres_data:
