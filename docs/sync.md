@@ -1,10 +1,16 @@
 # Background Sync — Django-Q Worker
 
-所有對 LDAP 的寫入都由 Django-Q worker 非同步處理。系統採用**單一 Flush 排程**（每 3 分鐘），其中包含兩個階段：先處理 task queue，再執行 consistency check。
+所有對 LDAP 的寫入都由 Django-Q worker 非同步處理。系統採用**單一 Flush 排程**（每 30 分鐘），其中包含兩個階段：先處理 task queue，再執行 consistency check。
 
 ---
 
-## Flush 排程（每 3 分鐘）
+> [!important] HA 環境
+> `flush_ldap_tasks()` 會檢查 `FLUSH_ENABLED`，只有 ACTIVE 才會執行 flush。  
+> `FLUSH_ENABLED` 由 monitor 寫入 `.env.role`，確保 standby 不會寫 LDAP。
+
+---
+
+## Flush 排程（每 30 分鐘）
 
 將 PostgreSQL `alias_task_queue` 與 `user_task_queue` 中的 task 批次送至 LDAP。
 

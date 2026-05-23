@@ -8,7 +8,7 @@ def add_schedule(apps, schema_editor):
         defaults={
             "name": "Flush LDAP Tasks",
             "schedule_type": "I",  # Minutes
-            "minutes": 3,
+            "minutes": 30,
         },
     )
 

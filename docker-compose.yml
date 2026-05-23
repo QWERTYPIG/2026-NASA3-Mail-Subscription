@@ -29,7 +29,10 @@ services:
 
   # 3. The API Gateway (Web Server)
   web:
-    build: .
+    build:
+      context: .
+      args:
+        PG_MAJOR: ${PG_MAJOR:-15}
     restart: always
     command: python manage.py runserver 0.0.0.0:8000
     volumes:
@@ -40,11 +43,7 @@ services:
       - DB_NAME=${DB_NAME:-Subscriptions}
       - DB_USER=${DB_USER:-MailAdmin}
       - DB_PASSWORD=${DB_PASSWORD:-password}
-      - DB_HOST=${DB_HOST:-postgres}
 
-      - REDIS_QUEUE_URL=${REDIS_QUEUE_URL:-redis://redis:6379/0}
-      - REDIS_CACHE_URL=${REDIS_CACHE_URL:-redis://redis:6379/1}
-      
       - LDAP_URI=${LDAP_URI:-ldap://localhost:389}
       - LDAP_BIND_DN=${LDAP_BIND_DN:-uid=mailtest,ou=people,dc=csie,dc=ntu,dc=edu,dc=tw}
       - LDAP_BIND_PASSWORD=${LDAP_BIND_PASSWORD:-}
@@ -53,6 +52,7 @@ services:
       - ALERT_EMAIL_SENDER=${ALERT_EMAIL_SENDER:-mailsub-alert@csie.ntu.edu.tw}
     env_file:
       - .env
+      - .env.role
     depends_on:
       - postgres
       - redis
@@ -61,19 +61,19 @@ services:
 
   # 4. The Background Worker (Django-Q)
   worker:
-    build: .
+    build:
+      context: .
+      args:
+        PG_MAJOR: ${PG_MAJOR:-15}
     restart: always
     command: python manage.py qcluster
     volumes:
       - .:/app
+      - ${LAST_SYNC_DIR:-/var/lib/mailsub}:${LAST_SYNC_DIR:-/var/lib/mailsub}
     environment:
       - DB_NAME=${DB_NAME:-Subscriptions}
       - DB_USER=${DB_USER:-MailAdmin}
       - DB_PASSWORD=${DB_PASSWORD:-password}
-      - DB_HOST=${DB_HOST:-postgres}
-      
-      - REDIS_QUEUE_URL=redis://${DB_HOST:-postgres}:6379/0
-      - REDIS_CACHE_URL=redis://${DB_HOST:-postgres}:6379/1
 
       - LDAP_URI=${LDAP_URI:-ldap://localhost:389}
       - LDAP_BIND_DN=${LDAP_BIND_DN:-uid=mailtest,ou=people,dc=csie,dc=ntu,dc=edu,dc=tw}
@@ -83,6 +83,7 @@ services:
       - ALERT_EMAIL_SENDER=${ALERT_EMAIL_SENDER:-mailsub-alert@csie.ntu.edu.tw}
     env_file:
       - .env
+      - .env.role
     depends_on:
       - postgres
       - redis

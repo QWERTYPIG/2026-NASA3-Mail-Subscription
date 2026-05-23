@@ -1,25 +1,79 @@
 # Mail Subscription System — High Availability
+
 ## Machines
 | Name | IP | Usage |
 |------|----|-------|
-| mail1 | 172.16.127.102 | default main DB and Redis; frontend and backend server |
-| mail2 | 172.16.127.116 | backup DB and Redis; frontend and backend server |
-| mail3 | 172.16.127.117 | backup main DB and Redis; frontend and backend server |
+| mail1 | 172.16.127.102 | default main DB/Redis; frontend + backend |
+| mail2 | 172.16.127.116 | standby DB/Redis; frontend + backend |
+| mail3 | 172.16.127.117 | standby DB/Redis; frontend + backend |
 | mail4 | 172.16.127.118 | Nginx reverse-proxy |
 
-## Structure
-Each machine has its own copy of all containers.
-One machine is used as main DB (default mail1), and all workers / backend read main DB for data.
-The same machine hosts Redis, which is used to store TTL and locks.
-Nginx reverse-proxy sends both frontend and backend requests to the three machines in round-robin fashion.
-Main machine is switched by changing `DB_HOST` in .env (TBD).
+---
 
-## Syncing
-The main DB is selected by `DB_HOST` in `.env`. A worker script syncs the
-primary to the other two machines every 10 minutes using `pg_dump` and
-`pg_restore`.
+## 架構總覽
 
-- Script: [scripts/db_sync.sh](scripts/db_sync.sh)
-- Primary discovery: `DB_HOST` in `.env` on the worker machine
-- Targets: `DB_REPLICA_HOSTS` (comma-separated list of mail1, mail2, mail3)
-- Trigger: parent scheduler runs the script every 10 minutes
+- mail1/2/3 各自跑完整容器（postgres/redis/web/worker）。
+- 只有 **一台 ACTIVE**：同時是 DB/Redis primary，且允許 worker flush LDAP。
+- 其他機器為 STANDBY：只跟隨 DB sync，不對 LDAP 寫入。
+- mail4 僅做 Nginx reverse-proxy（round-robin）。
+
+ACTIVE 的選舉、切換、與檢查細節由 monitor daemon 負責，詳見
+[monitor](./monitor.md)。
+
+---
+
+## 角色切換與設定來源
+
+monitor 會在每台機器寫入 `.env.role`：
+
+- `DB_HOST=<ACTIVE_IP>`
+- `REDIS_QUEUE_URL=redis://<ACTIVE_IP>:6379/0`
+- `REDIS_CACHE_URL=redis://<ACTIVE_IP>:6379/1`
+- `FLUSH_ENABLED=1`（ACTIVE）或 `0`（STANDBY）
+
+並透過 `docker compose up -d --force-recreate web worker` 讓 web/worker
+立即讀取新設定。
+
+---
+
+## Failover / Failback 規則
+
+ACTIVE = **優先序最高**且 core services（PostgreSQL、Redis、worker、DB sync）**全部健康**的機器。優先序以 `MONITOR_PEERS` 順序為準（預設 mail1 > mail2 > mail3）。
+
+### 穩定門檻
+
+| 情況 | 門檻 | 說明 |
+|------|------|------|
+| Failover（降級切換） | `FAIL_THRESHOLD`（預設 3） | 連續 N 次檢查失敗才切走 |
+| Failback（恢復切回） | `RECOVER_THRESHOLD`（預設 2） | 連續 M 次檢查成功才切回 |
+
+### Peer Fence（防 split-brain）
+
+通常需至少一台 peer monitor 可達才允許自我啟動。若無 peer 可達：
+
+- 如果本機已是 ACTIVE：繼續維持（推斷另外兩台都掛了）。
+- 如果本機非 ACTIVE：等待 `DEGRADED_THRESHOLD`（預設 8 次，約 2 分鐘）後才允許自啟動（**降級模式**），避免全站停擺。
+
+### Failback 新鮮度
+
+高優先序機器恢復後，切回前需確認 `LAST_SYNC_FILE` 年齡 ≤ `2 × SYNC_INTERVAL`（預設 20 分鐘）。若資料過舊，failback 暫停並記錄警告。
+
+## DB/Redis 與 failover
+
+- ACTIVE 必須同時通過 DB、Redis、worker、DB sync 健康檢查。
+- 若本機 PostgreSQL 仍為 read-only replica，monitor 不會允許切為 ACTIVE。
+- 若無 peer 可達，monitor 會在降級門檻後允許自啟動，避免全站停擺。
+
+---
+
+## DB Sync
+
+DB sync 只由 ACTIVE 觸發：
+
+- Script: [scripts/db_sync.sh](../scripts/db_sync.sh)
+- Primary: `DB_HOST`（由 `.env.role` 決定）
+- Targets: `DB_REPLICA_HOSTS`
+- Trigger: monitor 依 `SYNC_INTERVAL` 排程
+- Failback freshness：`LAST_SYNC_FILE` 必須在 2×`SYNC_INTERVAL` 內
+
+設計理由：避免故障切換時使用過舊資料的 primary。

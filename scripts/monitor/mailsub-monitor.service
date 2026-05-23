@@ -1,0 +1,18 @@
+[Unit]
+Description=MailSub HA Monitor
+After=network.target docker.service
+Wants=docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/mailsub
+ExecStart=/usr/bin/python3 /opt/mailsub/scripts/monitor/monitor.py
+EnvironmentFile=/etc/mailsub/monitor.env
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mailsub-monitor
+
+[Install]
+WantedBy=multi-user.target

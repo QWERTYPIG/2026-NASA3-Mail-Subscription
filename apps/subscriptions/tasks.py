@@ -270,6 +270,9 @@ def flush_ldap_tasks() -> None:
     A Redis lock prevents overlapping runs when the previous flush takes
     longer than the 3-minute schedule interval.
     """
+    if os.environ.get("FLUSH_ENABLED", "1") != "1":
+        logger.info("flush_ldap_tasks: FLUSH_ENABLED is not 1, skipping")
+        return
     acquired = cache.add(FLUSH_LOCK_KEY, "1", FLUSH_LOCK_TTL)
     if not acquired:
         logger.info("flush_ldap_tasks: previous flush still running, skipping")
