@@ -4,6 +4,12 @@
 
 ---
 
+> [!important] HA 環境
+> `flush_ldap_tasks()` 會檢查 `FLUSH_ENABLED`，只有 ACTIVE 才會執行 flush。  
+> `FLUSH_ENABLED` 由 monitor 寫入 `.env.role`，確保 standby 不會寫 LDAP。
+
+---
+
 ## Flush 排程（每 30 分鐘）
 
 將 PostgreSQL `alias_task_queue` 與 `user_task_queue` 中的 task 批次送至 LDAP。

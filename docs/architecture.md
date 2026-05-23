@@ -62,6 +62,7 @@
 |------|------|
 | [setup](./docs/setup.md) | 環境變數、Docker 操作、初次建置 |
 | [HA](./docs/HA.md) | 高可用部署（多機、DB/Redis 主備） |
+| [monitor](./docs/monitor.md) | HA monitor daemon 設計與行為 |
 | [ldap](./docs/ldap.md) | LDAP 目錄結構、讀寫權限、指令格式、task 優先順序 |
 | [database](./docs/database.md) | PostgreSQL schema（alias、task_queue） |
 | [auth](./docs/auth.md) | 登入流程、RBAC、Session Cookie、CSRF |

@@ -12,8 +12,10 @@
 | `DB_USER` | `MailAdmin` | PostgreSQL 使用者 |
 | `DB_PASSWORD` | `password` | PostgreSQL 密碼 |
 | `DB_HOST` | `postgres` | PostgreSQL host（HA 可改為主機 IP，如 `172.16.127.102`） |
+| `DB_REPLICA_HOSTS` | （無預設） | DB sync 目標（逗號分隔，HA 必填） |
 | `REDIS_QUEUE_URL` | `redis://redis:6379/0` | Django-Q task queue |
 | `REDIS_CACHE_URL` | `redis://redis:6379/1` | Rate limit TTL cache |
+| `FLUSH_ENABLED` | `1` | LDAP flush 開關（由 monitor 寫入 `.env.role`） |
 | `LDAP_URI` | `ldaps://172.16.127.109:636` | LDAP server（TLS）|
 | `LDAP_CA_CERT_FILE` | （必填，無預設值）| LDAP CA 憑證路徑（container 內可讀取），未設定則拒絕啟動 |
 | `LDAP_BIND_DN` | `uid=mailtest,ou=people,...` | LDAP 服務帳號 DN |
@@ -27,6 +29,23 @@
 
 > [!warning] Redis index 分開
 > index 0（queue）與 index 1（cache）刻意分開，避免 task queue 的 key 被 cache 操作誤刪。
+
+---
+
+## HA：`.env.role` 與 monitor 設定
+
+HA 模式下，web/worker 會同時載入 `.env` 與 `.env.role`：
+
+- `.env`：靜態設定（手動維護）
+- `.env.role`：由 monitor 產生的角色覆蓋（DB_HOST/Redis/FLUSH_ENABLED）
+
+monitor 透過 `/etc/mailsub/monitor.env` 讀取設定，常見項目：
+
+- `THIS_MACHINE_IP`, `MONITOR_PEERS`
+- `COMPOSE_FILE`, `ENV_BASE`, `ENV_ROLE`
+- `SYNC_INTERVAL`, `LAST_SYNC_FILE`
+
+詳細行為與理由請見 [monitor](./monitor.md)。
 
 ---
 
