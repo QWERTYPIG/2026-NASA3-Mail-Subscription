@@ -49,5 +49,23 @@ server {
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
     }
+    # --- ROUTE 3: Mailpit
+    location = /mailpit {
+        return 301 /mailpit/;
+    }
+
+    # 2. The actual reverse proxy
+    location /mailpit/ {
+        proxy_pass http://172.16.127.118:8025;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Mailpit requires WebSockets for its live-updating UI
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
 }
 ```
