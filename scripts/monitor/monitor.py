@@ -572,7 +572,7 @@ class Monitor:
 
         directory = os.path.dirname(self.config.env_role) or "."
         os.makedirs(directory, exist_ok=True)
-        
+
         # The implementation below makes file content replacement become atomic
         # This avoid .env.role broken while writing into it
         with tempfile.NamedTemporaryFile(

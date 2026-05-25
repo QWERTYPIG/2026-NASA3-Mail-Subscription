@@ -1,4 +1,5 @@
 .env
+.env.role
 __pycache__
 .DS_Store
 **/.obsidian/

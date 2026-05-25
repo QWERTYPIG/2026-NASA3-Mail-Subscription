@@ -23,35 +23,40 @@
 ## Data Flows
 
 ### Login
-```
-① React     →  POST /api/v1/auth/login/             →  Django
-② Django    →  Bind (django-auth-ldap)              →  LDAP
-③ Django    →  INSERT session                       →  PostgreSQL
-④ Django    →  Set-Cookie                           →  React
+```mermaid
+flowchart LR
+  React["React"] -->|1 POST /api/v1/auth/login/| Django["Django"]
+  Django -->|2 Bind django-auth-ldap| LDAP["LDAP"]
+  Django -->|3 INSERT session| PostgreSQL["PostgreSQL"]
+  Django -->|4 Set-Cookie| React
 ```
 
 ### Fetch Subscription Data
-```
-① React     →  GET /api/v1/subscriptions/           →  Django
-② Django    →  verify session cookie                →  PostgreSQL
-③ Django    →  SELECT alias + user_id               →  PostgreSQL
-④ Django    →  JSON array                           →  React
+```mermaid
+flowchart LR
+  React["React"] -->|1 GET /api/v1/subscriptions/| Django["Django"]
+  Django -->|2 verify session cookie| PostgreSQL["PostgreSQL"]
+  Django -->|3 SELECT alias + user_id| PostgreSQL
+  Django -->|4 JSON array| React
 ```
 
 ### Update Subscription
-```
-① React     →  POST /api/v1/subscriptions/update/   →  Django
-② Django    →  check rate limit                     →  Redis (TTL key)
-③ Django    →  UPDATE alias + enqueue               →  PostgreSQL
-④ Django    →  push task id                         →  Redis (Django-Q)
-⑤ Django    →  202 Accepted                         →  React
+```mermaid
+flowchart LR
+  React["React"] -->|1 POST /api/v1/subscriptions/update/| Django["Django"]
+  Django -->|2 check rate limit| RedisTTL["Redis (TTL key)"]
+  Django -->|3 UPDATE alias + enqueue| PostgreSQL["PostgreSQL"]
+  Django -->|4 push task id| RedisQ["Redis (Django-Q)"]
+  Django -->|5 202 Accepted| React
 ```
 
 ### Background Sync (Django-Q worker)
-```
-① Django-Q  →  flush alias task queue   →  LDAP ou=Aliases  (每 30 分鐘)
-② Django-Q  →  flush user task queue    →  LDAP ou=Aliases  (同一排程，alias 先)
-③ Django-Q  →  consistency check        →  LDAP vs PostgreSQL  (flush 結束後立即執行)
+```mermaid
+flowchart LR
+  Worker["Django-Q worker"] -->|1 flush alias task queue 每 30 分鐘| LDAP["LDAP ou=Aliases"]
+  Worker -->|2 flush user task queue 同一排程, alias 先| LDAP
+  Worker -->|3 consistency check flush 結束後立即執行 LDAP| LDAP
+  Worker -->|3 consistency check flush 結束後立即執行 PostgreSQL| PostgreSQL["PostgreSQL"]
 ```
 
 ---
