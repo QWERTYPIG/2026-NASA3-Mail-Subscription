@@ -25,38 +25,38 @@
 ### Login
 ```mermaid
 flowchart LR
-  React["React"] -->|POST /api/v1/auth/login/| Django["Django"]
-  Django -->|Bind (django-auth-ldap)| LDAP["LDAP"]
-  Django -->|INSERT session| PostgreSQL["PostgreSQL"]
-  Django -->|Set-Cookie| React
+  React["React"] -->|1 POST /api/v1/auth/login/| Django["Django"]
+  Django -->|2 Bind django-auth-ldap| LDAP["LDAP"]
+  Django -->|3 INSERT session| PostgreSQL["PostgreSQL"]
+  Django -->|4 Set-Cookie| React
 ```
 
 ### Fetch Subscription Data
 ```mermaid
 flowchart LR
-  React["React"] -->|GET /api/v1/subscriptions/| Django["Django"]
-  Django -->|verify session cookie| PostgreSQL["PostgreSQL"]
-  Django -->|SELECT alias + user_id| PostgreSQL
-  Django -->|JSON array| React
+  React["React"] -->|1 GET /api/v1/subscriptions/| Django["Django"]
+  Django -->|2 verify session cookie| PostgreSQL["PostgreSQL"]
+  Django -->|3 SELECT alias + user_id| PostgreSQL
+  Django -->|4 JSON array| React
 ```
 
 ### Update Subscription
 ```mermaid
 flowchart LR
-  React["React"] -->|POST /api/v1/subscriptions/update/| Django["Django"]
-  Django -->|check rate limit| RedisTTL["Redis (TTL key)"]
-  Django -->|UPDATE alias + enqueue| PostgreSQL["PostgreSQL"]
-  Django -->|push task id| RedisQ["Redis (Django-Q)"]
-  Django -->|202 Accepted| React
+  React["React"] -->|1 POST /api/v1/subscriptions/update/| Django["Django"]
+  Django -->|2 check rate limit| RedisTTL["Redis (TTL key)"]
+  Django -->|3 UPDATE alias + enqueue| PostgreSQL["PostgreSQL"]
+  Django -->|4 push task id| RedisQ["Redis (Django-Q)"]
+  Django -->|5 202 Accepted| React
 ```
 
 ### Background Sync (Django-Q worker)
 ```mermaid
 flowchart LR
-  Worker["Django-Q worker"] -->|flush alias task queue (每 30 分鐘)| LDAP["LDAP ou=Aliases"]
-  Worker -->|flush user task queue (同一排程，alias 先)| LDAP
-  Worker -->|consistency check (flush 結束後立即執行)| LDAP
-  Worker -->|consistency check (flush 結束後立即執行)| PostgreSQL["PostgreSQL"]
+  Worker["Django-Q worker"] -->|1 flush alias task queue 每 30 分鐘| LDAP["LDAP ou=Aliases"]
+  Worker -->|2 flush user task queue 同一排程, alias 先| LDAP
+  Worker -->|3 consistency check flush 結束後立即執行 LDAP| LDAP
+  Worker -->|3 consistency check flush 結束後立即執行 PostgreSQL| PostgreSQL["PostgreSQL"]
 ```
 
 ---
