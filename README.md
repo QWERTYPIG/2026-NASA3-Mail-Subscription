@@ -26,7 +26,7 @@
 ```mermaid
 flowchart LR
   React["React"] -->|POST /api/v1/auth/login/| Django["Django"]
-  Django -->|Bind (django-auth-ldap)| LDAP["LDAP"]
+  Django -->|Bind django-auth-ldap| LDAP["LDAP"]
   Django -->|INSERT session| PostgreSQL["PostgreSQL"]
   Django -->|Set-Cookie| React
 ```
@@ -53,10 +53,10 @@ flowchart LR
 ### Background Sync (Django-Q worker)
 ```mermaid
 flowchart LR
-  Worker["Django-Q worker"] -->|flush alias task queue (每 30 分鐘)| LDAP["LDAP ou=Aliases"]
-  Worker -->|flush user task queue (同一排程，alias 先)| LDAP
-  Worker -->|consistency check (flush 結束後立即執行)| LDAP
-  Worker -->|consistency check (flush 結束後立即執行)| PostgreSQL["PostgreSQL"]
+  Worker["Django-Q worker"] -->|flush alias task queue 每 30 分鐘| LDAP["LDAP ou=Aliases"]
+  Worker -->|flush user task queue 同一排程, alias 先| LDAP
+  Worker -->|consistency check flush 結束後立即執行| LDAP
+  Worker -->|consistency check flush 結束後立即執行| PostgreSQL["PostgreSQL"]
 ```
 
 ---
