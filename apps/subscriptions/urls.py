@@ -17,7 +17,7 @@ urlpatterns = [
         name="admin-alias-detail",
     ),
     path(
-        "mange/aliases/<str:alias_name>/users/",
+        "manage/aliases/<str:alias_name>/users/",
         AdminAliasUserListView.as_view(),
         name="admin-alias-user-list",
     ),
