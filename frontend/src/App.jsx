@@ -163,7 +163,7 @@ export default function App() {
 
             {/* 管理員專屬：別名細節頁面 */}
             <Route 
-              path="/admin/alias/:id" 
+              path="/manage/alias/:id" 
               element={
                 <ProtectedRoute user={currentUser} adminOnly={true}>
                   <AliasDetail />
