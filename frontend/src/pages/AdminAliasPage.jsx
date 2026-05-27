@@ -85,7 +85,7 @@ const AdminAliasPage = () => {
 
             <div className="flex items-center gap-2">
               <Link 
-                to={`/manage/alias/${alias.alias_name}`}
+                to={`/manage/aliases/${alias.alias_name}`}
                 className="flex items-center gap-2 px-4 py-2 bg-slate-100 text-slate-700 font-semibold rounded-lg hover:bg-indigo-600 hover:text-white transition-all"
               >
                 <Settings size={16} />
