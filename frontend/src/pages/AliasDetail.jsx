@@ -18,18 +18,18 @@ const AliasDetail = () => {
     const fetchData = async () => {
       try {
         // Fetch all aliases to get this specific alias's details (since there is no GET single alias endpoint)
-        const aliasRes = await api.get('/admin/aliases/');
+        const aliasRes = await api.get('/manage/aliases/');
         const currentAlias = aliasRes.data.find(a => a.alias_name === id);
         
         if (!currentAlias) throw new Error("Alias not found");
         setAlias(currentAlias);
 
         // Fetch the flat array of string UIDs
-        const membersRes = await api.get(`/admin/aliases/${id}/users/`);
+        const membersRes = await api.get(`/manage/aliases/${id}/users/`);
         setAllMembers(membersRes.data);
       } catch {
         toast.error("無法載入資料");
-        navigate('/admin/aliases/'); 
+        navigate('/manage/aliases/'); 
       } finally {
         setLoading(false);
       }
@@ -42,7 +42,7 @@ const AliasDetail = () => {
     e.preventDefault();
     setSaving(true);
     try {
-      await api.patch(`/admin/aliases/${id}/`, {
+      await api.patch(`/manage/aliases/${id}/`, {
         display_name: alias.display_name,
         description: alias.description
       });
@@ -60,7 +60,7 @@ const AliasDetail = () => {
     if (!newUid.trim()) return;
     
     try {
-      await api.post(`/admin/aliases/${id}/users/`, { uid: newUid.trim() });
+      await api.post(`/manage/aliases/${id}/users/`, { uid: newUid.trim() });
       toast.success(`已將 ${newUid} 加入群組`);
       setAllMembers(prev => [...prev, newUid.trim()]);
       setNewUid(''); // Clear input
@@ -74,7 +74,7 @@ const AliasDetail = () => {
     if (!window.confirm(`確定要將 ${uidToRemove} 從此群組移除嗎？`)) return;
     
     try {
-      await api.delete(`/admin/aliases/${id}/users/${uidToRemove}/`);
+      await api.delete(`/manage/aliases/${id}/users/${uidToRemove}/`);
       toast.success(`已移除 ${uidToRemove}`);
       setAllMembers(prev => prev.filter(uid => uid !== uidToRemove));
     } catch {
@@ -88,7 +88,7 @@ const AliasDetail = () => {
     <div className="max-w-4xl mx-auto space-y-8">
       {/* 頂部導覽 */}
       <button 
-        onClick={() => navigate('/admin/aliases')}
+        onClick={() => navigate('/manage/aliases')}
         className="flex items-center gap-2 text-slate-500 hover:text-indigo-600 transition-colors font-medium"
       >
         <ArrowLeft size={18} /> 返回別名清單

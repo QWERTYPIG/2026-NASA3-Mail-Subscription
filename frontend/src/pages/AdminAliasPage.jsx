@@ -12,7 +12,7 @@ const AdminAliasPage = () => {
 
   const fetchAliases = async () => {
     try {
-      const res = await api.get('/admin/aliases/');
+      const res = await api.get('/manage/aliases/');
       setAliases(res.data);
     } catch {
       toast.error("無法取得別名清單");
@@ -26,7 +26,7 @@ const AdminAliasPage = () => {
   const handleCreate = async (e) => {
     e.preventDefault();
     try {
-      await api.post('/admin/aliases/', {
+      await api.post('/manage/aliases/', {
         alias_name: newAlias.name,       // Map to Django format
         display_name: newAlias.name,     // Default display name
         description: newAlias.description          
@@ -43,7 +43,7 @@ const AdminAliasPage = () => {
   const handleDelete = async (aliasName, displayName) => {
     if (!window.confirm(`確定要刪除群組「${displayName}」嗎？此動作不可逆。`)) return;
     try {
-      await api.delete(`/admin/aliases/${aliasName}/`);
+      await api.delete(`/manage/aliases/${aliasName}/`);
       toast.success("已成功刪除別名");
       fetchAliases(); // Refresh the list
     } catch {
@@ -85,7 +85,7 @@ const AdminAliasPage = () => {
 
             <div className="flex items-center gap-2">
               <Link 
-                to={`/admin/alias/${alias.alias_name}`}
+                to={`/manage/aliases/${alias.alias_name}`}
                 className="flex items-center gap-2 px-4 py-2 bg-slate-100 text-slate-700 font-semibold rounded-lg hover:bg-indigo-600 hover:text-white transition-all"
               >
                 <Settings size={16} />
