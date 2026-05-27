@@ -115,9 +115,9 @@ X-CSRFToken: <csrftoken cookie 的值>
 
 ---
 
-## Aliases - `/api/v1/admin/aliases`
+## Aliases - `/api/v1/manage/aliases`
 
-### `GET /api/v1/admin/aliases/`
+### `GET /api/v1/manage/aliases/`
 
 取得所有 alias 列表。
 
@@ -142,7 +142,7 @@ X-CSRFToken: <csrftoken cookie 的值>
 
 ---
 
-### `POST /api/v1/admin/aliases/`
+### `POST /api/v1/manage/aliases/`
 
 建立新的 mailing list alias。
 
@@ -180,7 +180,7 @@ X-CSRFToken: <csrftoken cookie 的值>
 - `409 Conflict` — `alias_name` 已存在。
 ---
 
-### `PATCH /api/v1/admin/aliases/<alias_name>/`
+### `PATCH /api/v1/manage/aliases/<alias_name>/`
 
 更新指定 alias 的顯示名稱 (`display_name`) 或介紹 (`description`)。
 
@@ -248,7 +248,7 @@ X-CSRFToken: <csrftoken cookie 的值>
 
 ---
 
-### `DELETE /api/v1/admin/aliases/<alias_name>/`
+### `DELETE /api/v1/manage/aliases/<alias_name>/`
 
 刪除整個 mailing list alias。
 
@@ -277,7 +277,7 @@ X-CSRFToken: <csrftoken cookie 的值>
 
 ---
 
-### `GET /api/v1/admin/aliases/<alias_name>/users/`
+### `GET /api/v1/manage/aliases/<alias_name>/users/`
 
 取得指定 alias 的所有訂閱用戶列表。
 
@@ -295,7 +295,7 @@ X-CSRFToken: <csrftoken cookie 的值>
 
 ---
 
-### `POST /api/v1/admin/aliases/<alias_name>/users/`
+### `POST /api/v1/manage/aliases/<alias_name>/users/`
 
 手動將指定用戶（依 UID）加入到 alias。
 
@@ -352,7 +352,7 @@ X-CSRFToken: <csrftoken cookie 的值>
 
 ---
 
-### `DELETE /api/v1/admin/aliases/<alias_name>/users/<uid>/`
+### `DELETE /api/v1/manage/aliases/<alias_name>/users/<uid>/`
 
 手動移除指定用戶從 alias。
 

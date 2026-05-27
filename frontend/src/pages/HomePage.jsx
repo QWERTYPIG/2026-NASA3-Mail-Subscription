@@ -17,7 +17,7 @@ export default function AliasPage({ currentUser }) {
   const fetchAliases = async () => {
     try {
       // 如果是 Admin，可能需要呼叫 admin endpoints，但為了顯示列表，我們先保留原本的 API，或者依賴後端的權限設計
-      const endpoint = isNormalUser ? '/user/subscriptions/' : '/admin/aliases/';
+      const endpoint = isNormalUser ? '/user/subscriptions/' : '/manage/aliases/';
       const res = await api.get(endpoint);
       setAliases(res.data);
       //save original aliases state

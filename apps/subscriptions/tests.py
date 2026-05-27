@@ -180,16 +180,16 @@ class AliasListApiTest(TestCase):
 
     def test_admin_aliases_requires_admin_permission(self):
         self.client.force_authenticate(user=self.normal_user)
-        resp = self.client.get("/api/v1/admin/aliases/")
+        resp = self.client.get("/api/v1/manage/aliases/")
         self.assertEqual(resp.status_code, 403)
 
     def test_admin_aliases_requires_auth(self):
-        resp = self.client.get("/api/v1/admin/aliases/")
+        resp = self.client.get("/api/v1/manage/aliases/")
         self.assertEqual(resp.status_code, 403)
 
     def test_admin_aliases_returns_alias_list(self):
         self.client.force_authenticate(user=self.admin_user)
-        resp = self.client.get("/api/v1/admin/aliases/")
+        resp = self.client.get("/api/v1/manage/aliases/")
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(len(resp.data), 2)
         self.assertIn("alias_name", resp.data[0])
@@ -238,7 +238,7 @@ class AdminAliasCreateApiTest(TestCase):
             "display_name": "New Alias",
             "description": "A new alias.",
         }
-        resp = self.client.post("/api/v1/admin/aliases/", payload, format="json")
+        resp = self.client.post("/api/v1/manage/aliases/", payload, format="json")
         self.assertEqual(resp.status_code, 403)
 
     def test_create_alias_requires_auth(self):
@@ -248,7 +248,7 @@ class AdminAliasCreateApiTest(TestCase):
             "display_name": "New Alias",
             "description": "A new alias.",
         }
-        resp = self.client.post("/api/v1/admin/aliases/", payload, format="json")
+        resp = self.client.post("/api/v1/manage/aliases/", payload, format="json")
         self.assertEqual(resp.status_code, 403)
 
     def test_create_alias_success(self):
@@ -259,7 +259,7 @@ class AdminAliasCreateApiTest(TestCase):
             "display_name": "New Alias",
             "description": "A new alias for testing.",
         }
-        resp = self.client.post("/api/v1/admin/aliases/", payload, format="json")
+        resp = self.client.post("/api/v1/manage/aliases/", payload, format="json")
         self.assertEqual(resp.status_code, 201)
         self.assertEqual(resp.data["alias_name"], "new-alias")
         self.assertEqual(resp.data["display_name"], "New Alias")
@@ -281,7 +281,7 @@ class AdminAliasCreateApiTest(TestCase):
             # display_name is missing
             "description": "A new alias.",
         }
-        resp = self.client.post("/api/v1/admin/aliases/", payload, format="json")
+        resp = self.client.post("/api/v1/manage/aliases/", payload, format="json")
         self.assertEqual(resp.status_code, 400)
         self.assertIn("display_name", resp.data)
 
@@ -293,7 +293,7 @@ class AdminAliasCreateApiTest(TestCase):
             "display_name": "Trying to create a duplicate",
             "description": "This should fail.",
         }
-        resp = self.client.post("/api/v1/admin/aliases/", payload, format="json")
+        resp = self.client.post("/api/v1/manage/aliases/", payload, format="json")
         self.assertEqual(resp.status_code, 409)
         self.assertEqual(resp.data["code"], "CONFLICT")
 
@@ -305,7 +305,7 @@ class AdminAliasCreateApiTest(TestCase):
             "display_name": "Invalid Alias",
             "description": "This should fail due to invalid name format.",
         }
-        resp = self.client.post("/api/v1/admin/aliases/", payload, format="json")
+        resp = self.client.post("/api/v1/manage/aliases/", payload, format="json")
         self.assertEqual(resp.status_code, 400)
         self.assertIn("alias_name", resp.data)
 
@@ -321,7 +321,7 @@ class AdminAliasCreateApiTest(TestCase):
             "description": "Should rollback on queue failure",
         }
 
-        resp = self.client.post("/api/v1/admin/aliases/", payload, format="json")
+        resp = self.client.post("/api/v1/manage/aliases/", payload, format="json")
         self.assertEqual(resp.status_code, 500)
         self.assertEqual(resp.data["code"], "INTERNAL_SERVER_ERROR")
         self.assertFalse(Alias.objects.filter(alias_name="atomic-alias").exists())
@@ -346,7 +346,7 @@ class AdminAliasPatchApiTest(TestCase):
         self.client.force_authenticate(user=self.admin_user)
         payload = {"display_name": "New Name"}
         resp = self.client.patch(
-            "/api/v1/admin/aliases/not-exist/",
+            "/api/v1/manage/aliases/not-exist/",
             payload,
             format="json",
         )
@@ -360,7 +360,7 @@ class AdminAliasPatchApiTest(TestCase):
             "description": "Updated announcements",
         }
         resp = self.client.patch(
-            "/api/v1/admin/aliases/workstation/",
+            "/api/v1/manage/aliases/workstation/",
             payload,
             format="json",
         )
@@ -376,7 +376,7 @@ class AdminAliasPatchApiTest(TestCase):
         self.client.force_authenticate(user=self.admin_user)
         payload = {"display_name": "Workstation Lite"}
         resp = self.client.patch(
-            "/api/v1/admin/aliases/workstation/",
+            "/api/v1/manage/aliases/workstation/",
             payload,
             format="json",
         )
@@ -549,18 +549,18 @@ class AdminAliasDeleteApiTest(TestCase):
 
     def test_delete_requires_admin(self):
         self.client.force_authenticate(user=self.normal_user)
-        resp = self.client.delete("/api/v1/admin/aliases/todelete/")
+        resp = self.client.delete("/api/v1/manage/aliases/todelete/")
         self.assertEqual(resp.status_code, 403)
 
     def test_delete_alias_not_found(self):
         self.client.force_authenticate(user=self.admin_user)
-        resp = self.client.delete("/api/v1/admin/aliases/not-exist/")
+        resp = self.client.delete("/api/v1/manage/aliases/not-exist/")
         self.assertEqual(resp.status_code, 404)
         self.assertEqual(resp.data.get("code"), "NOT_FOUND")
 
     def test_delete_alias_success(self):
         self.client.force_authenticate(user=self.admin_user)
-        resp = self.client.delete("/api/v1/admin/aliases/todelete/")
+        resp = self.client.delete("/api/v1/manage/aliases/todelete/")
         self.assertEqual(resp.status_code, 204)
         self.assertFalse(Alias.objects.filter(alias_name="todelete").exists())
         self.assertTrue(AliasTaskQueue.objects.filter(alias_name="todelete", action="remove").exists())
@@ -569,7 +569,7 @@ class AdminAliasDeleteApiTest(TestCase):
     def test_delete_alias_atomic(self, mock_queue_create):
         mock_queue_create.side_effect = Exception("queue insert failed")
         self.client.force_authenticate(user=self.admin_user)
-        resp = self.client.delete("/api/v1/admin/aliases/todelete/")
+        resp = self.client.delete("/api/v1/manage/aliases/todelete/")
         self.assertEqual(resp.status_code, 500)
         self.assertEqual(resp.data.get("code"), "INTERNAL_SERVER_ERROR")
         # Ensure rollback happened
@@ -594,23 +594,23 @@ class AdminAliasUserListApiTest(TestCase):
         )
 
     def test_requires_auth(self):
-        resp = self.client.get("/api/v1/admin/aliases/toview/users/")
+        resp = self.client.get("/api/v1/manage/aliases/toview/users/")
         self.assertEqual(resp.status_code, 403)
 
     def test_requires_admin(self):
         self.client.force_authenticate(user=self.normal_user)
-        resp = self.client.get("/api/v1/admin/aliases/toview/users/")
+        resp = self.client.get("/api/v1/manage/aliases/toview/users/")
         self.assertEqual(resp.status_code, 403)
 
     def test_success_returns_user_ids(self):
         self.client.force_authenticate(user=self.admin_user)
-        resp = self.client.get("/api/v1/admin/aliases/toview/users/")
+        resp = self.client.get("/api/v1/manage/aliases/toview/users/")
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.data, ["b12345678", "b00000000"])
 
     def test_alias_not_found(self):
         self.client.force_authenticate(user=self.admin_user)
-        resp = self.client.get("/api/v1/admin/aliases/not-exist/users/")
+        resp = self.client.get("/api/v1/manage/aliases/not-exist/users/")
         self.assertEqual(resp.status_code, 404)
         self.assertEqual(resp.data.get("code"), "NOT_FOUND")
 
@@ -618,7 +618,7 @@ class AdminAliasUserListApiTest(TestCase):
     def test_internal_error(self, mock_get):
         mock_get.side_effect = Exception("DB error")
         self.client.force_authenticate(user=self.admin_user)
-        resp = self.client.get("/api/v1/admin/aliases/toview/users/")
+        resp = self.client.get("/api/v1/manage/aliases/toview/users/")
         self.assertEqual(resp.status_code, 500)
         self.assertEqual(resp.data.get("code"), "INTERNAL_SERVER_ERROR")
 
@@ -641,17 +641,17 @@ class AdminAliasUserAddApiTest(TestCase):
         )
 
     def test_add_requires_auth(self):
-        resp = self.client.post("/api/v1/admin/aliases/toadd/users/", {"uid": "b00000000"}, format="json")
+        resp = self.client.post("/api/v1/manage/aliases/toadd/users/", {"uid": "b00000000"}, format="json")
         self.assertEqual(resp.status_code, 403)
 
     def test_add_requires_admin(self):
         self.client.force_authenticate(user=self.normal_user)
-        resp = self.client.post("/api/v1/admin/aliases/toadd/users/", {"uid": "b00000000"}, format="json")
+        resp = self.client.post("/api/v1/manage/aliases/toadd/users/", {"uid": "b00000000"}, format="json")
         self.assertEqual(resp.status_code, 403)
 
     def test_add_success(self):
         self.client.force_authenticate(user=self.admin_user)
-        resp = self.client.post("/api/v1/admin/aliases/toadd/users/", {"uid": "b00000000"}, format="json")
+        resp = self.client.post("/api/v1/manage/aliases/toadd/users/", {"uid": "b00000000"}, format="json")
         self.assertEqual(resp.status_code, 200)
 
         alias = Alias.objects.get(alias_name="toadd")
@@ -662,7 +662,7 @@ class AdminAliasUserAddApiTest(TestCase):
 
     def test_add_duplicate(self):
         self.client.force_authenticate(user=self.admin_user)
-        resp = self.client.post("/api/v1/admin/aliases/toadd/users/", {"uid": "b12345678"}, format="json")
+        resp = self.client.post("/api/v1/manage/aliases/toadd/users/", {"uid": "b12345678"}, format="json")
         self.assertEqual(resp.status_code, 200)
 
         alias = Alias.objects.get(alias_name="toadd")
@@ -673,14 +673,14 @@ class AdminAliasUserAddApiTest(TestCase):
 
     def test_invalid_uid_format(self):
         self.client.force_authenticate(user=self.admin_user)
-        resp = self.client.post("/api/v1/admin/aliases/toadd/users/", {"uid": "invalid"}, format="json")
+        resp = self.client.post("/api/v1/manage/aliases/toadd/users/", {"uid": "invalid"}, format="json")
         self.assertEqual(resp.status_code, 400)
         self.assertEqual(resp.data["code"], "VALIDATION_ERROR")
         self.assertIn("uid", resp.data["details"])
 
     def test_missing_alias(self):
         self.client.force_authenticate(user=self.admin_user)
-        resp = self.client.post("/api/v1/admin/aliases/notexist/users/", {"uid": "b00000000"}, format="json")
+        resp = self.client.post("/api/v1/manage/aliases/notexist/users/", {"uid": "b00000000"}, format="json")
         self.assertEqual(resp.status_code, 404)
         self.assertEqual(resp.data["code"], "NOT_FOUND")
 
@@ -688,7 +688,7 @@ class AdminAliasUserAddApiTest(TestCase):
     def test_internal_error(self, mock_select):
         mock_select.side_effect = Exception("DB error")
         self.client.force_authenticate(user=self.admin_user)
-        resp = self.client.post("/api/v1/admin/aliases/toadd/users/", {"uid": "b00000000"}, format="json")
+        resp = self.client.post("/api/v1/manage/aliases/toadd/users/", {"uid": "b00000000"}, format="json")
         self.assertEqual(resp.status_code, 500)
         self.assertEqual(resp.data["code"], "INTERNAL_SERVER_ERROR")
 
@@ -711,17 +711,17 @@ class AdminAliasUserDeleteApiTest(TestCase):
         )
 
     def test_delete_requires_auth(self):
-        resp = self.client.delete("/api/v1/admin/aliases/toremove/users/b12345678/")
+        resp = self.client.delete("/api/v1/manage/aliases/toremove/users/b12345678/")
         self.assertEqual(resp.status_code, 403)
 
     def test_delete_requires_admin(self):
         self.client.force_authenticate(user=self.normal_user)
-        resp = self.client.delete("/api/v1/admin/aliases/toremove/users/b12345678/")
+        resp = self.client.delete("/api/v1/manage/aliases/toremove/users/b12345678/")
         self.assertEqual(resp.status_code, 403)
 
     def test_delete_success(self):
         self.client.force_authenticate(user=self.admin_user)
-        resp = self.client.delete("/api/v1/admin/aliases/toremove/users/b12345678/")
+        resp = self.client.delete("/api/v1/manage/aliases/toremove/users/b12345678/")
         self.assertEqual(resp.status_code, 204)
 
         alias = Alias.objects.get(alias_name="toremove")
@@ -733,7 +733,7 @@ class AdminAliasUserDeleteApiTest(TestCase):
 
     def test_delete_not_in_alias(self):
         self.client.force_authenticate(user=self.admin_user)
-        resp = self.client.delete("/api/v1/admin/aliases/toremove/users/b00000000/")
+        resp = self.client.delete("/api/v1/manage/aliases/toremove/users/b00000000/")
         self.assertEqual(resp.status_code, 404)
         self.assertEqual(resp.data["code"], "NOT_FOUND")
 
@@ -745,13 +745,13 @@ class AdminAliasUserDeleteApiTest(TestCase):
 
     def test_invalid_uid_format(self):
         self.client.force_authenticate(user=self.admin_user)
-        resp = self.client.delete("/api/v1/admin/aliases/toremove/users/invalid/")
+        resp = self.client.delete("/api/v1/manage/aliases/toremove/users/invalid/")
         self.assertEqual(resp.status_code, 400)
         self.assertEqual(resp.data["code"], "VALIDATION_ERROR")
 
     def test_missing_alias(self):
         self.client.force_authenticate(user=self.admin_user)
-        resp = self.client.delete("/api/v1/admin/aliases/notexist/users/b00000000/")
+        resp = self.client.delete("/api/v1/manage/aliases/notexist/users/b00000000/")
         self.assertEqual(resp.status_code, 404)
         self.assertEqual(resp.data["code"], "NOT_FOUND")
 
@@ -759,6 +759,6 @@ class AdminAliasUserDeleteApiTest(TestCase):
     def test_internal_error(self, mock_select):
         mock_select.side_effect = Exception("DB error")
         self.client.force_authenticate(user=self.admin_user)
-        resp = self.client.delete("/api/v1/admin/aliases/toremove/users/b12345678/")
+        resp = self.client.delete("/api/v1/manage/aliases/toremove/users/b12345678/")
         self.assertEqual(resp.status_code, 500)
         self.assertEqual(resp.data["code"], "INTERNAL_SERVER_ERROR")
