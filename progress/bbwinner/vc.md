@@ -49,3 +49,23 @@ SECRET_KEY set: True
 
 備註：
 - `DB_PASSWORD` 若未設定會變成空字串，DB 連線會失敗（安全失敗，避免默默使用弱預設值）
+
+### Stage 1-B
+ 
+目的：確認 Python/JS 依賴套件沒有已知 CVE。
+
+#### Frontend（npm）
+
+```
+cd frontend
+npm audit --package-lock-only --omit=dev
+npm audit fix
+```
+
+`node_modules`: should be added in .gitignore
+> [!Note]
+> 更改 `package-lock.json` and `package.json` 要 rebuild
+> `docker compose up -d --build`
+
+#### Backend
+
