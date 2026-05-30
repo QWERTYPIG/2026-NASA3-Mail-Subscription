@@ -112,9 +112,9 @@ npm audit --package-lock-only --omit=dev
 **Backend（pip-audit）**
 
 ```bash
-pip install --user pip-audit
-pip-audit -r requirements.txt
+docker compose run --rm web bash -c "pip install pip-audit && pip-audit -r requirements.txt"
 # 對 requirements.txt 中每個套件查詢 OSV/PyPI Advisory 資料庫
+# 在 container 內執行，不需要在本機安裝 pip-audit
 ```
 
 ---
@@ -124,10 +124,10 @@ pip-audit -r requirements.txt
 **目的**：找出常見的 Python 安全寫法問題（SQL injection、shell injection、hardcoded password、不安全的 pickle 等）。
 
 ```bash
-pip install --user bandit
-bandit -r apps/ -ll
+docker compose run --rm web bash -c "pip install bandit && bandit -r apps/ -ll"
 # -r：遞迴掃整個 apps/ 目錄
 # -ll：只顯示 medium severity 以上
+# 在 container 內執行，不需要在本機安裝 bandit
 ```
 
 重點關注：
