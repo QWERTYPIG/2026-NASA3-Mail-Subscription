@@ -2,7 +2,7 @@ from unittest.mock import MagicMock, call, patch
 
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 from django.contrib.auth import get_user_model
 from ldap3.core.exceptions import LDAPException
 from rest_framework.test import APIClient
@@ -48,6 +48,14 @@ class SubscriptionModelsTest(TestCase):
         self.assertEqual(task.alias_name, "existing-group")
         self.assertEqual(task.user_uid, "b12902000")
         self.assertEqual(task.action, "add")
+
+
+class HealthEndpointTest(SimpleTestCase):
+    def test_health_endpoint_is_public(self):
+        resp = self.client.get("/api/v1/health/")
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json(), {"status": "ok"})
 
 
 class FlushAliasTasksTest(TestCase):

@@ -27,6 +27,8 @@
 | `ALERT_EMAIL_SENDER` | `mailsub-alert@csie.ntu.edu.tw` | Alert email 寄件人 |
 | `VITE_API_TARGET` | `http://web:8000` | Backend API service URL（HA/外部部署可設為 `http://mailsus.csie.org`） |
 | `VITE_PORT` | `55111` | Frontend development server port（Vite） |
+| `WEB_PORT` | `8000` | monitor 檢查 Django `/api/v1/health/` 的 port |
+| `FRONTEND_PORT` | `VITE_PORT` 或 `55111` | monitor 檢查 frontend HTTP 的 port |
  
 
 > [!warning] Redis index 分開
