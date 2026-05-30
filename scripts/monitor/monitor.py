@@ -19,7 +19,7 @@ LOGGER = logging.getLogger(LOGGER_NAME)
 
 def log_event(level: int, event: str, message: str, **fields: object) -> None:
     """Emit one JSON log event for systemd journal and Loki ingestion."""
-    payload = {
+    payload: dict[str, object] = {
         "level": logging.getLevelName(level),
         "logger": LOGGER_NAME,
         "event": event,
@@ -151,7 +151,9 @@ def load_config() -> Config:
         pg_port=int(os.environ.get("PG_PORT", "5432")),
         redis_port=int(os.environ.get("REDIS_PORT", "6379")),
         web_port=int(os.environ.get("WEB_PORT", "8000")),
-        frontend_port=int(os.environ.get("FRONTEND_PORT", os.environ.get("VITE_PORT", "55111"))),
+        frontend_port=int(
+            os.environ.get("FRONTEND_PORT", os.environ.get("VITE_PORT", "55111"))
+        ),
         tcp_timeout=float(os.environ.get("TCP_TIMEOUT", "2.0")),
         health_timeout=float(os.environ.get("HEALTH_TIMEOUT", "2.0")),
     )
@@ -619,7 +621,13 @@ class Monitor:
         current = {check: ok for check, (_, ok, _, _, _) in checks.items()}
         previous = self._last_serving_health
 
-        for check, (service, ok, down_message, recovered_message, target) in checks.items():
+        for check, (
+            service,
+            ok,
+            down_message,
+            recovered_message,
+            target,
+        ) in checks.items():
             was_ok = previous.get(check) if previous is not None else True
             if was_ok and not ok:
                 log_event(
