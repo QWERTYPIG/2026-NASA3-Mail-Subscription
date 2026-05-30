@@ -19,6 +19,15 @@ from .serializers import (
 from .throttles import UserSubscriptionCooldownThrottle
 from .utils import not_found_response, internal_error_response, validation_error_response, conflict_response
 
+
+class HealthView(APIView):
+    authentication_classes = []
+    permission_classes = []
+
+    def get(self, request):
+        return Response({"status": "ok"}, status=status.HTTP_200_OK)
+
+
 class AdminAliasUserListView(APIView):
     permission_classes = [IsAdminUser]
 

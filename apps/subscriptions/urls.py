@@ -1,6 +1,7 @@
 from django.urls import path
 
 from .views import (
+    HealthView,
     AdminAliasListView, 
     AdminAliasDetailView, 
     UserSubscriptionListView, 
@@ -10,6 +11,7 @@ from .views import (
 
 
 urlpatterns = [
+    path("health/", HealthView.as_view(), name="health"),
     path("manage/aliases/", AdminAliasListView.as_view(), name="admin-alias-list"),
     path(
         "manage/aliases/<str:alias_name>/",

@@ -48,6 +48,17 @@ ACTIVE 必須同時滿足以下條件：
 - worker 必須能 flush LDAP 才能被視為 ACTIVE。
 - DB sync 可用才能保障 failback 時資料新鮮度。
 
+## Serving Health（不參與 ACTIVE 選舉）
+
+monitor 也回報 web/frontend serving 狀態，供 Grafana Loki / 外部監控告警使用：
+
+- `web_running`：`web` container 是否 running
+- `web_api_ok`：`GET /api/v1/health/` 是否回 `200`
+- `frontend_running`：`frontend` container 是否 running
+- `frontend_http_ok`：Vite frontend HTTP 是否回 `2xx`/`3xx`
+
+這些欄位**不影響** ACTIVE 選舉、failover/failback、DB/Redis role、`FLUSH_ENABLED` 或 LDAP flush safety。
+
 ---
 
 ## /health 端點
@@ -57,15 +68,40 @@ ACTIVE 必須同時滿足以下條件：
 ```json
 {
   "worker_running": true,
-  "db_sync_ready": true
+  "db_sync_ready": true,
+  "web_running": true,
+  "web_api_ok": true,
+  "frontend_running": true,
+  "frontend_http_ok": true
 }
 ```
 
 檢查方式：
 - `docker compose ps` 檢查 worker 是否 running
 - `docker compose exec -T worker ...` 檢查 `scripts/db_sync.sh` 與 `pg_dump/pg_restore/psql`
+- `docker compose ps` 檢查 web/frontend 是否 running
+- HTTP 檢查本機 `web` 的 `/api/v1/health/` 與 frontend root path
 
 設計理由：避免 SSH、降低攻擊面，只用 LAN 上的 HTTP + TCP。
+
+## Structured Logs
+
+monitor 寫到 systemd journal 的 log message 為 JSON 格式，供 Alloy 收集到 Loki。Serving health 只在狀態變化時記錄：
+
+- `serving_health_down`：某個 web/frontend check 從 healthy 變 unhealthy
+- `serving_health_recovered`：某個 web/frontend check 從 unhealthy 變 healthy
+
+範例 Loki queries：
+
+```logql
+{unit="mailsub-monitor.service"} |= "serving_health_down"
+```
+
+```logql
+{unit="mailsub-monitor.service"} |= "\"service\":\"web\"" |= "serving_health_down"
+```
+
+若要在 Grafana 中看到這些 logs，Alloy 需安裝在 `mail1`/`mail2`/`mail3` 並收集 `mailsub-monitor.service` 的 systemd journal。
 
 ---
 
@@ -138,6 +174,67 @@ docker compose exec -T worker scripts/db_sync.sh
 
 理由：failback 時若資料過舊，切回高優先序機器會造成回溯。
 
+## 流程圖
+
+```mermaid
+flowchart TD
+    Start["monitor.py starts"] --> LoadConfig["Load /etc/mailsub/monitor.env"]
+    LoadConfig --> StartHealth["Start HTTP server :9123 /health"]
+    StartHealth --> Loop["Every CHECK_INTERVAL seconds"]
+
+    Loop --> LocalHealth["Check local health"]
+    Loop --> PeerHealth["Check peer health"]
+
+    LocalHealth --> Worker["docker compose ps: worker"]
+    LocalHealth --> DBSync["worker db_sync_ready check"]
+    LocalHealth --> WebRun["docker compose ps: web"]
+    LocalHealth --> WebAPI["GET 127.0.0.1:WEB_PORT/api/v1/health/"]
+    LocalHealth --> FrontRun["docker compose ps: frontend"]
+    LocalHealth --> FrontHTTP["GET 127.0.0.1:FRONTEND_PORT/"]
+
+    WebRun --> ServingLog["If web/frontend status changed, write JSON log"]
+    WebAPI --> ServingLog
+    FrontRun --> ServingLog
+    FrontHTTP --> ServingLog
+
+    ServingLog --> Loki["systemd journal -> Alloy -> Loki/Grafana alert"]
+
+    PeerHealth --> PeerMonitor["GET peer :9123/health"]
+    PeerHealth --> PeerPG["TCP peer PostgreSQL port"]
+    PeerHealth --> PeerRedis["TCP peer Redis port"]
+
+    Worker --> Statuses["Build PeerStatus for each machine"]
+    DBSync --> Statuses
+    PeerMonitor --> Statuses
+    PeerPG --> Statuses
+    PeerRedis --> Statuses
+
+    Statuses --> CoreOnly["core_healthy = pg_ok + redis_ok + worker_running +
+    db_sync_ready"]
+
+    CoreOnly --> Election["Pick highest-priority core_healthy peer"]
+    Election --> Fence["Apply peer fence / degraded mode rules"]
+    Fence --> Threshold["Apply failover/failback thresholds"]
+
+    Threshold --> SameActive{"ACTIVE unchanged?"}
+    SameActive -- yes --> MaybeSync["If local ACTIVE, maybe run db_sync.sh"]
+    SameActive -- no --> Writable{"Local becoming ACTIVE?"}
+
+    Writable -- no --> ApplyRole["Write .env.role"]
+    Writable -- yes --> PGWritable["Check local PostgreSQL writable"]
+
+    PGWritable -- writable --> ApplyRole
+    PGWritable -- read-only --> Abort["Abort ACTIVE transition + JSON log"]
+
+    ApplyRole --> Restart["docker compose up -d --force-recreate web worker"]
+    Restart --> MaybeSync
+    MaybeSync --> Loop
+    Abort --> MaybeSync
+
+    StartHealth --> HealthReq["GET /health request"]
+    HealthReq --> HealthJSON["Return current local health JSON"]
+```
+
 ---
 
 ## 設定（/etc/mailsub/monitor.env）
@@ -165,6 +262,8 @@ docker compose exec -T worker scripts/db_sync.sh
 | `LAST_SYNC_FILE` | unset | 同步時間記錄檔 |
 | `PG_PORT` | `5432` | PostgreSQL port |
 | `REDIS_PORT` | `6379` | Redis port |
+| `WEB_PORT` | `8000` | Django web health check port |
+| `FRONTEND_PORT` | `VITE_PORT` 或 `55111` | Frontend HTTP health check port |
 | `TCP_TIMEOUT` | `2.0` | TCP 健康檢查 timeout |
 | `HEALTH_TIMEOUT` | `2.0` | /health 讀取 timeout |
 | `DB_NAME` | `Subscriptions` | 本機 PostgreSQL DB 名稱 |

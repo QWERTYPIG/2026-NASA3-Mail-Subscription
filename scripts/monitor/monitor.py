@@ -13,6 +13,20 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib import error, request
 
 DEFAULT_PEERS = "172.16.127.102,172.16.127.116,172.16.127.117"
+LOGGER_NAME = "mailsub-monitor"
+LOGGER = logging.getLogger(LOGGER_NAME)
+
+
+def log_event(level: int, event: str, message: str, **fields: object) -> None:
+    """Emit one JSON log event for systemd journal and Loki ingestion."""
+    payload: dict[str, object] = {
+        "level": logging.getLevelName(level),
+        "logger": LOGGER_NAME,
+        "event": event,
+        "message": message,
+    }
+    payload.update({key: value for key, value in fields.items() if value is not None})
+    LOGGER.log(level, json.dumps(payload, sort_keys=True, default=str))
 
 
 @dataclass(frozen=True)
@@ -33,8 +47,30 @@ class Config:
     last_sync_file: str | None
     pg_port: int
     redis_port: int
+    web_port: int
+    frontend_port: int
     tcp_timeout: float
     health_timeout: float
+
+
+@dataclass(frozen=True)
+class LocalHealth:
+    worker_running: bool
+    db_sync_ready: bool
+    web_running: bool
+    web_api_ok: bool
+    frontend_running: bool
+    frontend_http_ok: bool
+
+    def to_payload(self) -> dict[str, bool]:
+        return {
+            "worker_running": self.worker_running,
+            "db_sync_ready": self.db_sync_ready,
+            "web_running": self.web_running,
+            "web_api_ok": self.web_api_ok,
+            "frontend_running": self.frontend_running,
+            "frontend_http_ok": self.frontend_http_ok,
+        }
 
 
 @dataclass
@@ -45,6 +81,10 @@ class PeerStatus:
     monitor_reachable: bool
     worker_running: bool
     db_sync_ready: bool
+    web_running: bool = False
+    web_api_ok: bool = False
+    frontend_running: bool = False
+    frontend_http_ok: bool = False
 
     @property
     def core_healthy(self) -> bool:
@@ -85,8 +125,11 @@ def load_config() -> Config:
     peers = dedupe(parse_csv(peers_raw))
     this_ip = require("THIS_MACHINE_IP")
     if this_ip not in peers:
-        logging.warning(
-            "THIS_MACHINE_IP %s not in peer list; appending to end.", this_ip
+        log_event(
+            logging.WARNING,
+            "this_ip_not_in_peer_list",
+            "THIS_MACHINE_IP not in peer list; appending to end",
+            this_ip=this_ip,
         )
         peers.append(this_ip)
 
@@ -107,6 +150,10 @@ def load_config() -> Config:
         last_sync_file=os.environ.get("LAST_SYNC_FILE"),
         pg_port=int(os.environ.get("PG_PORT", "5432")),
         redis_port=int(os.environ.get("REDIS_PORT", "6379")),
+        web_port=int(os.environ.get("WEB_PORT", "8000")),
+        frontend_port=int(
+            os.environ.get("FRONTEND_PORT", os.environ.get("VITE_PORT", "55111"))
+        ),
         tcp_timeout=float(os.environ.get("TCP_TIMEOUT", "2.0")),
         health_timeout=float(os.environ.get("HEALTH_TIMEOUT", "2.0")),
     )
@@ -117,7 +164,7 @@ def setup_logging(log_level: str) -> None:
     level = getattr(logging, log_level.upper(), logging.INFO)
     logging.basicConfig(
         level=level,
-        format="%(asctime)s %(levelname)s %(message)s",
+        format="%(message)s",
     )
 
 
@@ -143,7 +190,8 @@ class Monitor:
         self._candidate_count = 0
         self._no_peer_count = 0
         self._degraded_mode = False
-        self._health_cache: tuple[float, bool, bool] | None = None
+        self._health_cache: tuple[float, LocalHealth] | None = None
+        self._last_serving_health: dict[str, bool] | None = None
         self._last_freshness_warning = 0.0
         self._last_no_active_warning = 0.0
         self._last_sync_file_warning = 0.0
@@ -160,11 +208,7 @@ class Monitor:
                     self.end_headers()
                     return
 
-                worker_running, db_sync_ready = monitor.local_worker_health()
-                payload = {
-                    "worker_running": worker_running,
-                    "db_sync_ready": db_sync_ready,
-                }
+                payload = monitor.local_health().to_payload()
                 body = json.dumps(payload).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
@@ -174,14 +218,23 @@ class Monitor:
 
             def log_message(self, format: str, *args: object) -> None:
                 """Route HTTP handler logs through the logging module."""
-                logging.info("health: " + format, *args)
+                log_event(
+                    logging.INFO,
+                    "health_http_request",
+                    format % args,
+                )
 
         self._server = ThreadingHTTPServer(("", self.config.monitor_port), Handler)
         self._server_thread = threading.Thread(
             target=self._server.serve_forever, daemon=True
         )
         self._server_thread.start()
-        logging.info("health endpoint listening on :%s", self.config.monitor_port)
+        log_event(
+            logging.INFO,
+            "health_endpoint_listening",
+            "monitor health endpoint listening",
+            port=self.config.monitor_port,
+        )
 
     def stop(self) -> None:
         """Signal the main loop and HTTP server to stop."""
@@ -192,7 +245,12 @@ class Monitor:
     def run(self) -> None:
         """Run the monitor loop until a stop signal is received."""
         self.start_health_server()
-        logging.info("monitor loop starting with peers=%s", ",".join(self.config.peers))
+        log_event(
+            logging.INFO,
+            "monitor_loop_starting",
+            "monitor loop starting",
+            peers=self.config.peers,
+        )
 
         while not self._stop_event.is_set():
             loop_start = time.time()
@@ -212,7 +270,11 @@ class Monitor:
 
         if any_peer_reachable:
             if self._degraded_mode:
-                logging.warning("peer reachability restored; exiting degraded mode.")
+                log_event(
+                    logging.WARNING,
+                    "peer_reachability_restored",
+                    "peer reachability restored; exiting degraded mode",
+                )
             self._degraded_mode = False
             self._no_peer_count = 0
         else:
@@ -225,7 +287,12 @@ class Monitor:
             now = time.time()
             # Avoid too frequent logging
             if now - self._last_no_active_warning > 60:
-                logging.warning("no eligible ACTIVE; keeping current role.")
+                log_event(
+                    logging.WARNING,
+                    "no_eligible_active",
+                    "no eligible ACTIVE; keeping current role",
+                    current_active=self._last_active,
+                )
                 self._last_no_active_warning = now
             self._candidate_active = None
             self._candidate_count = 0
@@ -248,11 +315,13 @@ class Monitor:
             self._candidate_count = 1
 
         required = self.required_threshold(self._last_active, desired_active)
-        logging.info(
-            "candidate ACTIVE=%s (%s/%s)",
-            desired_active,
-            self._candidate_count,
-            required,
+        log_event(
+            logging.INFO,
+            "active_candidate_progress",
+            "ACTIVE candidate progress",
+            candidate_active=desired_active,
+            candidate_count=self._candidate_count,
+            required_count=required,
         )
 
         if self._candidate_count < required:
@@ -266,7 +335,12 @@ class Monitor:
             if not self.is_sync_fresh():
                 now = time.time()
                 if now - self._last_freshness_warning > 60:
-                    logging.warning("failback blocked: last sync too old or missing.")
+                    log_event(
+                        logging.WARNING,
+                        "failback_blocked_stale_sync",
+                        "failback blocked: last sync too old or missing",
+                        desired_active=desired_active,
+                    )
                     self._last_freshness_warning = now
                 self._candidate_active = None
                 self._candidate_count = 0
@@ -275,8 +349,11 @@ class Monitor:
 
         if desired_active == self.config.this_ip:
             if not self.local_postgres_writable():
-                logging.warning(
-                    "local postgres not writable; aborting ACTIVE transition."
+                log_event(
+                    logging.WARNING,
+                    "active_transition_blocked_postgres_readonly",
+                    "local postgres not writable; aborting ACTIVE transition",
+                    desired_active=desired_active,
                 )
                 self._candidate_active = None
                 self._candidate_count = 0
@@ -288,7 +365,13 @@ class Monitor:
         self._candidate_active = None
         self._candidate_count = 0
 
-        logging.info("ACTIVE transition %s -> %s", old_active, desired_active)
+        log_event(
+            logging.INFO,
+            "active_transition",
+            "ACTIVE transition",
+            old_active=old_active,
+            new_active=desired_active,
+        )
         self.apply_role(desired_active)
         self.maybe_run_db_sync(self._last_active)
 
@@ -313,22 +396,34 @@ class Monitor:
                 self._no_peer_count >= self.config.degraded_threshold
                 and not self._degraded_mode
             ):
-                logging.warning("no peers reachable; staying ACTIVE in degraded mode.")
+                log_event(
+                    logging.WARNING,
+                    "degraded_mode_staying_active",
+                    "no peers reachable; staying ACTIVE in degraded mode",
+                    active_ip=self.config.this_ip,
+                )
                 self._degraded_mode = True
             return desired_active
 
         # No peer reachable, wait more time to determine whether to enter degraded mode
         if self._no_peer_count < self.config.degraded_threshold:
             if self._no_peer_count == 1:
-                logging.warning(
-                    "no peers reachable; deferring self-activation until degraded threshold."
+                log_event(
+                    logging.WARNING,
+                    "self_activation_deferred",
+                    "no peers reachable; deferring self-activation until degraded threshold",
+                    no_peer_count=self._no_peer_count,
+                    degraded_threshold=self.config.degraded_threshold,
                 )
             return None
 
         # Enter degraded mode
         if not self._degraded_mode:
-            logging.warning(
-                "no peers reachable; entering degraded mode for self-activation."
+            log_event(
+                logging.WARNING,
+                "degraded_mode_self_activation",
+                "no peers reachable; entering degraded mode for self-activation",
+                active_ip=self.config.this_ip,
             )
             self._degraded_mode = True
         return desired_active
@@ -374,11 +469,23 @@ class Monitor:
         except FileNotFoundError:
             return False
         except OSError as exc:
-            logging.warning("failed to read LAST_SYNC_FILE: %s", exc)
+            log_event(
+                logging.WARNING,
+                "last_sync_file_read_failed",
+                "failed to read LAST_SYNC_FILE",
+                path=self.config.last_sync_file,
+                error=str(exc),
+            )
             return False
 
         if not raw.isdigit():
-            logging.warning("LAST_SYNC_FILE contains invalid timestamp: %s", raw)
+            log_event(
+                logging.WARNING,
+                "last_sync_file_invalid",
+                "LAST_SYNC_FILE contains invalid timestamp",
+                path=self.config.last_sync_file,
+                value=raw,
+            )
             return False
 
         last_sync = int(raw)
@@ -390,7 +497,7 @@ class Monitor:
     def collect_peer_statuses(self) -> dict[str, PeerStatus]:
         """Gather health details for all peers and return a status map."""
         statuses: dict[str, PeerStatus] = {}
-        local_worker_running, local_db_sync_ready = self.local_worker_health()
+        local_health = self.local_health()
 
         for ip in self.config.peers:
             pg_ok = tcp_reachable(ip, self.config.pg_port, self.config.tcp_timeout)
@@ -404,8 +511,12 @@ class Monitor:
                     pg_ok=pg_ok,
                     redis_ok=redis_ok,
                     monitor_reachable=True,
-                    worker_running=local_worker_running,
-                    db_sync_ready=local_db_sync_ready,
+                    worker_running=local_health.worker_running,
+                    db_sync_ready=local_health.db_sync_ready,
+                    web_running=local_health.web_running,
+                    web_api_ok=local_health.web_api_ok,
+                    frontend_running=local_health.frontend_running,
+                    frontend_http_ok=local_health.frontend_http_ok,
                 )
             else:
                 # 戳 /health api provided by monitor peer
@@ -413,6 +524,14 @@ class Monitor:
                 monitor_reachable = health is not None
                 worker_running = bool(health.get("worker_running")) if health else False
                 db_sync_ready = bool(health.get("db_sync_ready")) if health else False
+                web_running = bool(health.get("web_running")) if health else False
+                web_api_ok = bool(health.get("web_api_ok")) if health else False
+                frontend_running = (
+                    bool(health.get("frontend_running")) if health else False
+                )
+                frontend_http_ok = (
+                    bool(health.get("frontend_http_ok")) if health else False
+                )
                 status = PeerStatus(
                     ip=ip,
                     pg_ok=pg_ok,
@@ -420,32 +539,124 @@ class Monitor:
                     monitor_reachable=monitor_reachable,
                     worker_running=worker_running,
                     db_sync_ready=db_sync_ready,
+                    web_running=web_running,
+                    web_api_ok=web_api_ok,
+                    frontend_running=frontend_running,
+                    frontend_http_ok=frontend_http_ok,
                 )
 
             statuses[ip] = status
 
         return statuses
 
-    def local_worker_health(self) -> tuple[bool, bool]:
-        """Check local worker running state and db sync readiness."""
+    def local_health(self) -> LocalHealth:
+        """Check local core and serving health."""
         now = time.time()
 
-        # If previous worker health check is less than 3 sec ago, then just use cache
-        # since docker compose command is time consuming
         if self._health_cache and (now - self._health_cache[0]) < 3:
-            _, worker_running, db_sync_ready = self._health_cache
-            return worker_running, db_sync_ready
+            return self._health_cache[1]
 
-        # Use `docker compose ps` to see if worker is running
         worker_running = self.compose_service_running("worker")
-        if not worker_running:
-            self._health_cache = (now, False, False)
-            return False, False
+        db_sync_ready = self.worker_db_sync_ready() if worker_running else False
 
-        # Check if DB is ok then return packed info
-        db_sync_ready = self.worker_db_sync_ready()
-        self._health_cache = (now, worker_running, db_sync_ready)
-        return worker_running, db_sync_ready
+        web_running = self.compose_service_running("web")
+        web_target = f"http://127.0.0.1:{self.config.web_port}/api/v1/health/"
+        web_api_ok = web_running and self.http_ok(web_target, {200})
+
+        frontend_running = self.compose_service_running("frontend")
+        frontend_target = f"http://127.0.0.1:{self.config.frontend_port}/"
+        frontend_http_ok = frontend_running and self.http_ok(
+            frontend_target, range(200, 400)
+        )
+
+        health = LocalHealth(
+            worker_running=worker_running,
+            db_sync_ready=db_sync_ready,
+            web_running=web_running,
+            web_api_ok=web_api_ok,
+            frontend_running=frontend_running,
+            frontend_http_ok=frontend_http_ok,
+        )
+        self._health_cache = (now, health)
+        self.log_serving_health_transitions(health)
+        return health
+
+    def local_worker_health(self) -> tuple[bool, bool]:
+        """Check local worker running state and db sync readiness."""
+        health = self.local_health()
+        return health.worker_running, health.db_sync_ready
+
+    def log_serving_health_transitions(self, health: LocalHealth) -> None:
+        """Log serving down/recovered events when web/frontend health changes."""
+        checks = {
+            "web_running": (
+                "web",
+                health.web_running,
+                "web compose service is not running",
+                "web compose service recovered",
+                "web",
+            ),
+            "web_api_ok": (
+                "web",
+                health.web_api_ok,
+                "web API health check failed",
+                "web API health check recovered",
+                f"http://127.0.0.1:{self.config.web_port}/api/v1/health/",
+            ),
+            "frontend_running": (
+                "frontend",
+                health.frontend_running,
+                "frontend compose service is not running",
+                "frontend compose service recovered",
+                "frontend",
+            ),
+            "frontend_http_ok": (
+                "frontend",
+                health.frontend_http_ok,
+                "frontend HTTP health check failed",
+                "frontend HTTP health check recovered",
+                f"http://127.0.0.1:{self.config.frontend_port}/",
+            ),
+        }
+        current = {check: ok for check, (_, ok, _, _, _) in checks.items()}
+        previous = self._last_serving_health
+
+        for check, (
+            service,
+            ok,
+            down_message,
+            recovered_message,
+            target,
+        ) in checks.items():
+            was_ok = previous.get(check) if previous is not None else True
+            if was_ok and not ok:
+                log_event(
+                    logging.WARNING,
+                    "serving_health_down",
+                    down_message,
+                    service=service,
+                    check=check,
+                    target=target,
+                )
+            elif not was_ok and ok:
+                log_event(
+                    logging.INFO,
+                    "serving_health_recovered",
+                    recovered_message,
+                    service=service,
+                    check=check,
+                    target=target,
+                )
+
+        self._last_serving_health = current
+
+    def http_ok(self, url: str, expected_statuses: range | set[int]) -> bool:
+        """Return True if an HTTP GET returns an expected status."""
+        try:
+            with request.urlopen(url, timeout=self.config.health_timeout) as response:
+                return response.status in expected_statuses
+        except (OSError, TimeoutError, error.URLError):
+            return False
 
     def fetch_peer_health(self, ip: str) -> dict[str, object] | None:
         """Fetch /health JSON from a peer monitor."""
@@ -469,7 +680,13 @@ class Monitor:
         if result is None:
             return False
         if result.returncode != 0:
-            logging.warning("docker compose ps failed: %s", result.stderr.strip())
+            log_event(
+                logging.WARNING,
+                "compose_ps_failed",
+                "docker compose ps failed",
+                service=service,
+                error=result.stderr.strip(),
+            )
             return False
         running = result.stdout.split()
         return service in running
@@ -489,8 +706,12 @@ class Monitor:
         if result is None:
             return False
         if result.returncode != 0:
-            logging.warning(
-                "worker db sync readiness check failed: %s", result.stderr.strip()
+            log_event(
+                logging.WARNING,
+                "worker_db_sync_readiness_failed",
+                "worker db sync readiness check failed",
+                service="worker",
+                error=result.stderr.strip(),
             )
             return False
         return True
@@ -513,14 +734,24 @@ class Monitor:
         if result is None:
             return False
         if result.returncode != 0:
-            logging.warning(
-                "local postgres writability check failed: %s", result.stderr.strip()
+            log_event(
+                logging.WARNING,
+                "postgres_writability_check_failed",
+                "local postgres writability check failed",
+                service="postgres",
+                error=result.stderr.strip(),
             )
             return False
         status = result.stdout.strip().lower()
         if status in {"f", "false"}:
             return True
-        logging.warning("local postgres is read-only (pg_is_in_recovery=%s)", status)
+        log_event(
+            logging.WARNING,
+            "postgres_read_only",
+            "local postgres is read-only",
+            service="postgres",
+            pg_is_in_recovery=status,
+        )
         return False
 
     def apply_role(self, active_ip: str) -> None:
@@ -528,9 +759,21 @@ class Monitor:
         role_env = self.build_role_env(active_ip)
         changed = self.write_env_role(role_env)
         if changed:
-            logging.info("wrote role env file %s", self.config.env_role)
+            log_event(
+                logging.INFO,
+                "role_env_written",
+                "wrote role env file",
+                path=self.config.env_role,
+                active_ip=active_ip,
+            )
         else:
-            logging.info("role env unchanged at %s", self.config.env_role)
+            log_event(
+                logging.INFO,
+                "role_env_unchanged",
+                "role env unchanged",
+                path=self.config.env_role,
+                active_ip=active_ip,
+            )
 
         result = self.run_compose(
             ["up", "-d", "--force-recreate", "web", "worker"],
@@ -539,7 +782,13 @@ class Monitor:
         if result is None:
             return
         if result.returncode != 0:
-            logging.warning("docker compose up failed: %s", result.stderr.strip())
+            log_event(
+                logging.WARNING,
+                "compose_up_failed",
+                "docker compose up failed",
+                services=["web", "worker"],
+                error=result.stderr.strip(),
+            )
 
     def build_role_env(self, active_ip: str) -> list[str]:
         """Build the .env.role content for the selected ACTIVE host."""
@@ -565,7 +814,13 @@ class Monitor:
         except FileNotFoundError:
             existing = ""
         except OSError as exc:
-            logging.warning("failed to read env role file: %s", exc)
+            log_event(
+                logging.WARNING,
+                "role_env_read_failed",
+                "failed to read env role file",
+                path=self.config.env_role,
+                error=str(exc),
+            )
 
         if existing == new_content:
             return False
@@ -592,7 +847,11 @@ class Monitor:
         if not self.config.last_sync_file:
             now = time.time()
             if now - self._last_sync_file_warning > 60:
-                logging.warning("LAST_SYNC_FILE not set; skip DB sync scheduling.")
+                log_event(
+                    logging.WARNING,
+                    "last_sync_file_not_set",
+                    "LAST_SYNC_FILE not set; skip DB sync scheduling",
+                )
                 self._last_sync_file_warning = now
             return
 
@@ -601,14 +860,25 @@ class Monitor:
         if last_sync and (now - last_sync) < self.config.sync_interval:
             return
 
-        logging.info("triggering db_sync.sh")
+        log_event(
+            logging.INFO,
+            "db_sync_triggered",
+            "triggering db_sync.sh",
+            service="worker",
+        )
         result = self.run_compose(
             ["exec", "-T", "worker", "scripts/db_sync.sh"], timeout=600
         )
         if result is None:
             return
         if result.returncode != 0:
-            logging.warning("db_sync.sh failed: %s", result.stderr.strip())
+            log_event(
+                logging.WARNING,
+                "db_sync_failed",
+                "db_sync.sh failed",
+                service="worker",
+                error=result.stderr.strip(),
+            )
 
     def read_last_sync_timestamp(self) -> int | None:
         """Read the last sync timestamp from LAST_SYNC_FILE."""
@@ -620,10 +890,22 @@ class Monitor:
         except FileNotFoundError:
             return None
         except OSError as exc:
-            logging.warning("failed to read LAST_SYNC_FILE: %s", exc)
+            log_event(
+                logging.WARNING,
+                "last_sync_file_read_failed",
+                "failed to read LAST_SYNC_FILE",
+                path=self.config.last_sync_file,
+                error=str(exc),
+            )
             return None
         if not raw.isdigit():
-            logging.warning("LAST_SYNC_FILE contains invalid timestamp: %s", raw)
+            log_event(
+                logging.WARNING,
+                "last_sync_file_invalid",
+                "LAST_SYNC_FILE contains invalid timestamp",
+                path=self.config.last_sync_file,
+                value=raw,
+            )
             return None
         return int(raw)
 
@@ -642,7 +924,13 @@ class Monitor:
                     check=False,
                 )
         except (OSError, subprocess.TimeoutExpired) as exc:
-            logging.warning("docker compose command failed: %s", exc)
+            log_event(
+                logging.WARNING,
+                "compose_command_failed",
+                "docker compose command failed",
+                args=args,
+                error=str(exc),
+            )
             return None
 
 
@@ -655,7 +943,12 @@ def main() -> None:
 
     def handle_signal(signum: int, _frame: object) -> None:
         """Handle SIGTERM/SIGINT by stopping the monitor."""
-        logging.info("received signal %s; stopping monitor.", signum)
+        log_event(
+            logging.INFO,
+            "shutdown_signal_received",
+            "received signal; stopping monitor",
+            signal=signum,
+        )
         monitor.stop()
 
     signal.signal(signal.SIGTERM, handle_signal)
