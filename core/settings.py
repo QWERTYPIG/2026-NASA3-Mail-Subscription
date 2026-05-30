@@ -14,6 +14,7 @@ import os  # for reading environment variables
 from pathlib import Path
 
 import ldap  # for using ldap
+from django.core.exceptions import ImproperlyConfigured
 from django_auth_ldap.config import LDAPSearch, PosixGroupType
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -22,9 +23,15 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
+def _required_env(name: str) -> str:
+    value = os.environ.get(name)
+    if not value:
+        raise ImproperlyConfigured(f"{name} must be set")
+    return value
+
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = "django-insecure-8i2(a*=k50*w8gs4r*!j%_om-8(-qcgif8f&yhu=ql5f5!0nnn"
+SECRET_KEY = _required_env("SECRET_KEY")
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
@@ -88,7 +95,7 @@ DATABASES = {
         "ENGINE": "django.db.backends.postgresql",
         "NAME": os.environ.get("DB_NAME", "mail_sub_db"),
         "USER": os.environ.get("DB_USER", "admin"),
-        "PASSWORD": os.environ.get("DB_PASSWORD", "secret"),
+        "PASSWORD": os.environ.get("DB_PASSWORD", ""),
         "HOST": os.environ.get("DB_HOST", "postgres"),
         "PORT": "5432",
     }
