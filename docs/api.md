@@ -4,6 +4,25 @@
 
 ---
 
+## Health — `/api/v1/health/`
+
+### `GET /api/v1/health/`
+
+檢查 Django web API 是否可回應。此 endpoint 不需要登入、不需要 CSRF token，不會讀寫 LDAP、Redis、task queue 或修改資料庫。
+
+**Response `200 OK`**
+
+```json
+{ "status": "ok" }
+```
+
+用途：
+
+- monitor 檢查 `web_api_ok`
+- 外部 load balancer / monitoring system 檢查 backend API 是否存活
+
+---
+
 ## Auth — `/api/v1/auth/`
 
 ### `POST /api/v1/auth/login/`
@@ -456,4 +475,3 @@ X-CSRFToken: <csrftoken cookie 的值>
   "code": "INTERNAL_SERVER_ERROR"
 }
 ```
-
