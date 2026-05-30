@@ -120,3 +120,25 @@ WARNINGS:
 ?: (security.W016) You have 'django.middleware.csrf.CsrfViewMiddleware' in your MIDDLEWARE, but you have not set CSRF_COOKIE_SECURE to True. Using a secure-only CSRF cookie makes it more difficult for network traffic sniffers to steal the CSRF token.
 ?: (security.W018) You should not have DEBUG set to True in deployment.
 ```
+
+### CI（GitHub Actions）
+
+#### Gitleaks
+
+- 觸發：`push`、`pull_request`
+- 內容：掃描 git history 是否有 secrets（API key / password / private key）
+- 檔案：`.github/workflows/gitleaks.yml`
+
+#### Dependency CVE Check
+
+- 觸發：`pull_request`
+- 內容：
+	- `pip-audit` 掃 `requirements.txt`
+	- `npm audit --package-lock-only --omit=dev --audit-level=high` 掃 frontend production dependencies
+- 檔案：`.github/workflows/dep-cve.yml`
+
+#### Bandit SAST
+
+- 觸發：`pull_request`
+- 內容：`bandit -r apps/ -ll` 掃 Python code（只顯示 medium 以上）
+- 檔案：`.github/workflows/bandit.yml`
