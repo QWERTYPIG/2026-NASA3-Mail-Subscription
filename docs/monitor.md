@@ -174,6 +174,67 @@ docker compose exec -T worker scripts/db_sync.sh
 
 理由：failback 時若資料過舊，切回高優先序機器會造成回溯。
 
+## 流程圖
+
+```mermaid
+flowchart TD
+    Start["monitor.py starts"] --> LoadConfig["Load /etc/mailsub/monitor.env"]
+    LoadConfig --> StartHealth["Start HTTP server :9123 /health"]
+    StartHealth --> Loop["Every CHECK_INTERVAL seconds"]
+
+    Loop --> LocalHealth["Check local health"]
+    Loop --> PeerHealth["Check peer health"]
+
+    LocalHealth --> Worker["docker compose ps: worker"]
+    LocalHealth --> DBSync["worker db_sync_ready check"]
+    LocalHealth --> WebRun["docker compose ps: web"]
+    LocalHealth --> WebAPI["GET 127.0.0.1:WEB_PORT/api/v1/health/"]
+    LocalHealth --> FrontRun["docker compose ps: frontend"]
+    LocalHealth --> FrontHTTP["GET 127.0.0.1:FRONTEND_PORT/"]
+
+    WebRun --> ServingLog["If web/frontend status changed, write JSON log"]
+    WebAPI --> ServingLog
+    FrontRun --> ServingLog
+    FrontHTTP --> ServingLog
+
+    ServingLog --> Loki["systemd journal -> Alloy -> Loki/Grafana alert"]
+
+    PeerHealth --> PeerMonitor["GET peer :9123/health"]
+    PeerHealth --> PeerPG["TCP peer PostgreSQL port"]
+    PeerHealth --> PeerRedis["TCP peer Redis port"]
+
+    Worker --> Statuses["Build PeerStatus for each machine"]
+    DBSync --> Statuses
+    PeerMonitor --> Statuses
+    PeerPG --> Statuses
+    PeerRedis --> Statuses
+
+    Statuses --> CoreOnly["core_healthy = pg_ok + redis_ok + worker_running +
+    db_sync_ready"]
+
+    CoreOnly --> Election["Pick highest-priority core_healthy peer"]
+    Election --> Fence["Apply peer fence / degraded mode rules"]
+    Fence --> Threshold["Apply failover/failback thresholds"]
+
+    Threshold --> SameActive{"ACTIVE unchanged?"}
+    SameActive -- yes --> MaybeSync["If local ACTIVE, maybe run db_sync.sh"]
+    SameActive -- no --> Writable{"Local becoming ACTIVE?"}
+
+    Writable -- no --> ApplyRole["Write .env.role"]
+    Writable -- yes --> PGWritable["Check local PostgreSQL writable"]
+
+    PGWritable -- writable --> ApplyRole
+    PGWritable -- read-only --> Abort["Abort ACTIVE transition + JSON log"]
+
+    ApplyRole --> Restart["docker compose up -d --force-recreate web worker"]
+    Restart --> MaybeSync
+    MaybeSync --> Loop
+    Abort --> MaybeSync
+
+    StartHealth --> HealthReq["GET /health request"]
+    HealthReq --> HealthJSON["Return current local health JSON"]
+```
+
 ---
 
 ## 設定（/etc/mailsub/monitor.env）
