@@ -1,4 +1,8 @@
-## Vulnerability Check
+# Vulnerability Check
+
+---
+
+## Stage 1
 
 ### Stage 1-A
 
@@ -142,3 +146,7 @@ WARNINGS:
 - 觸發：`pull_request`
 - 內容：`bandit -r apps/ -ll` 掃 Python code（只顯示 medium 以上）
 - 檔案：`.github/workflows/bandit.yml`
+
+---
+
+## Stage 2

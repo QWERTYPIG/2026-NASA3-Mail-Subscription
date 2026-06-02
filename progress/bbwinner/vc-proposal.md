@@ -190,22 +190,17 @@ ssh <user>@172.16.127.117   # mail3
 **目的**：掃描已 build 的 Docker image 中的 OS 層與 Python/Node 套件 CVE。
 
 ```bash
-# 在目標機器上，先確認 image 名稱
-docker images
-
-# 用 Trivy 掃描（以 web image 為例）
-docker run --rm \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  aquasec/trivy:latest image \
-  --severity HIGH,CRITICAL \
-  mailsub-web:latest     # 替換為實際 image 名稱
-
-# 同樣方式掃 worker、frontend image
-docker run --rm \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  aquasec/trivy:latest image \
-  --severity HIGH,CRITICAL \
-  mailsub-worker:latest
+for IMAGE in \
+  2026-nasa3-mail-subscription-web:latest \
+  2026-nasa3-mail-subscription-worker:latest \
+  2026-nasa3-mail-subscription-frontend:latest; do
+  echo "=== Trivy: $IMAGE ==="
+  docker run --rm \
+    -v /var/run/docker.sock:/var/run/docker.sock \
+    aquasec/trivy:latest image \
+    --severity HIGH,CRITICAL \
+    "$IMAGE"
+done
 ```
 
 Trivy 會掃：OS package（apt/apk）、Python site-packages、npm packages。`--severity HIGH,CRITICAL` 過濾雜訊，只看高風險項目。
@@ -299,7 +294,39 @@ docker inspect $(docker ps -q) \
 
 ---
 
-#### 2-F) Monitor Daemon 檔案權限檢查
+#### 2-F) Postgres 認證檢查
+
+**目的**：確認 Postgres 不接受無密碼連線（對應 2-C 的 Redis 版本）。
+
+```bash
+docker compose exec -T db psql -U postgres -c '\l' 2>&1 \
+  && echo "WARN: postgres accepts no-password connection" \
+  || echo "PASS: postgres requires auth"
+```
+
+若輸出 `WARN`，任何能到達 Postgres port 的程式都可以不帶密碼登入，需在 `docker-compose.yml` 的 `db` service 確認 `POSTGRES_PASSWORD` 有設定，並確保 `pg_hba.conf` 不允許 `trust`。
+
+---
+
+#### 2-G) Container 執行身份檢查
+
+**目的**：確認 web / worker container 以非 root 使用者執行。若以 root 跑，container 被 exploit 後攻擊者在 container 內即有完整 root 權限。
+
+```bash
+docker compose exec -T web whoami
+docker compose exec -T worker whoami
+# 預期：非 root（例如 appuser、django 等）
+```
+
+若輸出 `root`，需在對應的 `Dockerfile` 加入：
+```dockerfile
+RUN adduser --disabled-password appuser
+USER appuser
+```
+
+---
+
+#### 2-H) Monitor Daemon 檔案權限檢查
 
 **目的**：確認 `.env.role`、`monitor.env`、`db_sync.sh` 沒有過寬的讀取或寫入權限。
 
@@ -318,7 +345,7 @@ ls -la /path/to/project/scripts/db_sync.sh
 
 ---
 
-#### 2-G) LDAP 連線協定確認
+#### 2-I) LDAP 連線協定確認
 
 **目的**：確認 LDAP bind 是否走 plaintext `ldap://`，評估 credential 暴露風險。
 
@@ -373,8 +400,10 @@ Stage 1（Local）                    Stage 2（Remote：每台機器）
      npm audit）                    2-C  Redis 認證
 1-C  Bandit SAST                    2-D  Env var（DEBUG / SECRET_KEY）
 1-D  Django --deploy check          2-E  Docker socket mount
-1-E  HTTP headers（local stack）    2-F  Monitor file permissions
-                                    2-G  LDAP protocol
+1-E  HTTP headers（local stack）    2-F  Postgres 認證
+                                    2-G  Container 執行身份
+                                    2-H  Monitor file permissions
+                                    2-I  LDAP protocol
 
 Stage 3（Local dev stack）
 ───────────────────────────
@@ -442,6 +471,19 @@ TARGET=$1
 echo "=== Running remote VC on $TARGET ==="
 
 ssh "$TARGET" bash << 'REMOTE'
+echo "--- [2-A] Trivy image scan ---"
+for IMAGE in \
+  2026-nasa3-mail-subscription-web:latest \
+  2026-nasa3-mail-subscription-worker:latest \
+  2026-nasa3-mail-subscription-frontend:latest; do
+  echo "=== $IMAGE ==="
+  docker run --rm \
+    -v /var/run/docker.sock:/var/run/docker.sock \
+    aquasec/trivy:latest image \
+    --severity HIGH,CRITICAL \
+    "$IMAGE"
+done
+
 echo "--- [2-B] Port exposure ---"
 ss -tlnp | grep -E '5432|6379|9123|8000|55111' || echo "(no matching ports)"
 
@@ -460,7 +502,16 @@ docker inspect $(docker ps -q) \
   --format '{{.Name}}: {{range .Mounts}}{{.Source}} {{end}}' \
   | grep docker.sock && echo "WARN: docker.sock mounted" || echo "PASS: no docker.sock mount"
 
-echo "--- [2-G] LDAP URI protocol ---"
+echo "--- [2-F] Postgres authentication ---"
+docker compose -f ~/mailsub/docker-compose.yml exec -T db psql -U postgres -c '\l' 2>&1 \
+  && echo "WARN: postgres accepts no-password connection" \
+  || echo "PASS: postgres requires auth"
+
+echo "--- [2-G] Container running user ---"
+echo -n "web: "; docker compose -f ~/mailsub/docker-compose.yml exec -T web whoami
+echo -n "worker: "; docker compose -f ~/mailsub/docker-compose.yml exec -T worker whoami
+
+echo "--- [2-I] LDAP URI protocol ---"
 docker compose -f ~/mailsub/docker-compose.yml exec -T web env | grep LDAP_URI
 REMOTE
 
@@ -470,9 +521,9 @@ echo "=== Done: $TARGET ==="
 使用方式：
 ```bash
 chmod +x vc-remote.sh
-./vc-remote.sh user@172.16.127.102   # mail1
-./vc-remote.sh user@172.16.127.116   # mail2
-./vc-remote.sh user@172.16.127.117   # mail3
+./vc-remote.sh user@172.16.127.102 2>&1 | tee vc-mail1-$(date +%Y%m%d).log
+./vc-remote.sh user@172.16.127.116 2>&1 | tee vc-mail2-$(date +%Y%m%d).log
+./vc-remote.sh user@172.16.127.117 2>&1 | tee vc-mail3-$(date +%Y%m%d).log
 ```
 
 ---

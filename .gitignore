@@ -6,3 +6,5 @@ __pycache__
 mockldap_ca.crt
 
 frontend/node_modules/
+
+vc-*.log
