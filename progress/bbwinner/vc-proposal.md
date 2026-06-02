@@ -45,7 +45,7 @@
 | # | Issue | Severity | 狀態 | 負責人 | PR / Commit |
 |---|-------|----------|------|--------|-------------|
 | 1 | Login `/api/v1/auth/login/` 無 rate limiting，可暴力破解 LDAP bind | High | 待修 | | |
-| 2 | Redis 無密碼 | High | 待確認（視 port 暴露範圍） | | |
+| 2 | Redis 無密碼，且 6379 publish 到 `0.0.0.0`（compose 無 `--requirepass`，`"6379:6379"`） | High | 已確認 | | |
 | 3 | `axios` high severity CVE（frontend） | High | 待升版 | | |
 | 4 | `DEBUG=True`、`ALLOWED_HOSTS=["*"]`、hardcoded `SECRET_KEY`（`core/settings.py` 已確認） | High | 待修（env var 化） | | |
 | 5 | LDAP 走 `ldap://`（plaintext） | Low | Accepted risk（內網），需記錄 | | |
@@ -190,20 +190,27 @@ ssh <user>@172.16.127.117   # mail3
 **目的**：掃描已 build 的 Docker image 中的 OS 層與 Python/Node 套件 CVE。
 
 ```bash
-for IMAGE in \
-  2026-nasa3-mail-subscription-web:latest \
-  2026-nasa3-mail-subscription-worker:latest \
-  2026-nasa3-mail-subscription-frontend:latest; do
+# image 名稱由 compose 推導，不要硬編 project 前綴
+# （web/worker/frontend 是 build service，名稱會隨 checkout 目錄名變動，硬編會掃不到任何 image）
+for IMAGE in $(docker compose config --images); do
   echo "=== Trivy: $IMAGE ==="
   docker run --rm \
     -v /var/run/docker.sock:/var/run/docker.sock \
     aquasec/trivy:latest image \
     --severity HIGH,CRITICAL \
-    "$IMAGE"
+    --ignore-unfixed \
+    --exit-code 1 \
+    "$IMAGE" \
+    || echo "FAIL: $IMAGE has fixable HIGH/CRITICAL CVEs"
 done
 ```
 
-Trivy 會掃：OS package（apt/apk）、Python site-packages、npm packages。`--severity HIGH,CRITICAL` 過濾雜訊，只看高風險項目。
+Trivy 會掃：OS package（apt/apk）、Python site-packages、npm packages。
+
+- `--severity HIGH,CRITICAL`：過濾雜訊，只看高風險項目。
+- `--ignore-unfixed`：只報「上游已有修補版」的 CVE，避免被無法處理的項目灌爆。
+- `--exit-code 1`：有命中時回傳非 0，讓 script / CI 能判斷 PASS/FAIL（預設即使有 CVE 也回 0）。
+- **建議把 `aquasec/trivy:latest` 釘到特定版本**（如 `aquasec/trivy:0.x.y`），確保每次掃描可重現。
 
 ---
 
@@ -211,9 +218,27 @@ Trivy 會掃：OS package（apt/apk）、Python site-packages、npm packages。`
 
 **目的**：確認 Postgres（5432）、Redis（6379）、monitor `/health`（9123）沒有對外暴露。
 
+**Step 1**：完整列出監聽狀態（人工檢視用）
+
 ```bash
 ss -tlnp | grep -E '5432|6379|9123|8000|55111'
 ```
+
+**Step 2**：對最敏感的 5432 / 6379 做 assert-only 判斷
+
+DB 與 Redis **絕不應**綁在 `0.0.0.0`（所有介面）。下列指令在命中 `0.0.0.0` 或 `[::]`（IPv6 any）時直接回 `FAIL`：
+
+```bash
+ss -tlnH 'sport = :5432 or sport = :6379' \
+  | grep -qE '0\.0\.0\.0|\[::\]' \
+  && echo 'FAIL: 5432/6379 bound to all interfaces (LAN-reachable)' \
+  || echo 'PASS: 5432/6379 not bound to all interfaces'
+```
+
+> [!warning] 已知現況
+> 目前 `docker-compose.yml` 的 `postgres` 與 `redis` 是 `"5432:5432"` / `"6379:6379"`，會 publish 到 `0.0.0.0`。
+> 這正是 Known Issue #2（Redis 無密碼）能被 LAN 觸及的根因。修法：改成 `127.0.0.1:5432:5432` / `127.0.0.1:6379:6379`，
+> 或移除 host port mapping、只走 `mail_net` 內部網路。
 
 預期結果：
 
@@ -233,9 +258,15 @@ ss -tlnp | grep -E '5432|6379|9123|8000|55111'
 
 **目的**：確認 Redis 有設定密碼（或至少確認只允許 Docker 內部網路存取）。
 
+> [!important] 一定要從 host 跑，不要 `docker exec` 進 redis container
+> 在 container 內 ping 走 loopback，無論有沒有設密碼幾乎都會通，測不到真正的暴露面。
+> 從 host 對 `127.0.0.1:6379` 連線，才反映「外部能否不帶密碼存取」。
+
 ```bash
-redis-cli -h 127.0.0.1 -p 6379 ping
-# 若回傳 PONG 且無需密碼，表示 Redis 無認證保護
+redis-cli -h 127.0.0.1 -p 6379 ping 2>/dev/null \
+  && echo 'FAIL: Redis answers PING without auth' \
+  || echo 'PASS: Redis requires auth (or not reachable on 127.0.0.1)'
+# 回傳 PONG（無需密碼）即代表 Redis 無認證保護
 ```
 
 若 Redis 無密碼且 port 6379 對 LAN 開放，任何 LAN 上的機器可以：
@@ -250,34 +281,37 @@ redis-cli -h 127.0.0.1 -p 6379 ping
 
 **目的**：確認 production 機器的環境變數已覆蓋不安全的預設值。
 
-> [!important] 不要把 secrets 印到終端
-> 下列指令用 `grep -q` 做判斷，只輸出 PASS/FAIL。
+> [!important] 不要把 env var 的「值」印到終端
+> 直接 `env | grep` 印出值（即使把 SECRET_KEY 用 `sed` 蓋掉）有兩個問題：
+> (1) `DEBUG` / `ALLOWED_HOSTS` 等值會落進 `logs/vc-*.log`；
+> (2) redaction 一旦 pattern 寫錯，真正的 secret 就外洩。
+> 因此這裡改成 **assert-only**：把 `env` 抓進變數後用 `grep -q` 判斷，**只輸出 PASS/FAIL，永遠不印值**。
+> 結果是 machine-readable 的，三台機器可一致比對，也能直接進 CI。
 
 ```bash
+# 只抓一次 env（避免每個檢查都 docker compose exec 一遍）；
+# 結果存進變數，全程用 grep -q，不 echo 任何值。
+ENV_DUMP=$(docker compose exec -T web env)
+
 # DEBUG 必須是 False
-(docker compose exec -T web env | grep -q '^DEBUG=False$' \
-  && echo 'PASS: DEBUG=False' \
-  || echo 'FAIL: DEBUG is not False')
+grep -q '^DEBUG=False$'                <<<"$ENV_DUMP" && echo 'PASS: DEBUG=False'                || echo 'FAIL: DEBUG is not False'
 
 # ALLOWED_HOSTS 不應是 *
-(docker compose exec -T web env | grep -q '^ALLOWED_HOSTS=\*$' \
-  && echo 'FAIL: ALLOWED_HOSTS is *' \
-  || echo 'PASS: ALLOWED_HOSTS is not *')
+grep -q '^ALLOWED_HOSTS=\*$'           <<<"$ENV_DUMP" && echo 'FAIL: ALLOWED_HOSTS is *'         || echo 'PASS: ALLOWED_HOSTS is not *'
 
 # SECRET_KEY 必須存在，且不應是 django-insecure- 開頭
-(docker compose exec -T web env | grep -q '^SECRET_KEY=' \
-  && echo 'PASS: SECRET_KEY is set' \
-  || echo 'FAIL: SECRET_KEY missing')
-
-(docker compose exec -T web env | grep -q '^SECRET_KEY=django-insecure-' \
-  && echo 'FAIL: SECRET_KEY is django-insecure-*' \
-  || echo 'PASS: SECRET_KEY is not django-insecure-*')
+grep -q '^SECRET_KEY='                 <<<"$ENV_DUMP" && echo 'PASS: SECRET_KEY is set'          || echo 'FAIL: SECRET_KEY missing'
+grep -q '^SECRET_KEY=django-insecure-' <<<"$ENV_DUMP" && echo 'FAIL: SECRET_KEY is django-insecure-*' || echo 'PASS: SECRET_KEY is not the insecure default'
 
 # DB_PASSWORD 不應是預設的 password
-(docker compose exec -T web env | grep -q '^DB_PASSWORD=password$' \
-  && echo 'FAIL: DB_PASSWORD still default' \
-  || echo 'PASS: DB_PASSWORD not default (or not exposed)')
+grep -q '^DB_PASSWORD=password$'       <<<"$ENV_DUMP" && echo 'FAIL: DB_PASSWORD still default'  || echo 'PASS: DB_PASSWORD not default (or not exposed)'
 ```
+
+> [!note] 補充：`env` 檢查的是「環境變數的字面值」，不是 Django 實際生效的設定。
+> 若要驗證 production container 真正載入的設定，最權威的方式是在該 container 內跑
+> `python manage.py check --deploy`（見 1-D），它會評估 effective settings 並只回報 W/E，
+> 同樣不會印出 secret。2-D 的 env assert 與 1-D 的 deploy check 互補：前者抓「值有沒有設對」，
+> 後者抓「設定組合是否安全」（cookie secure flag、HSTS、SSL redirect 等 `env` 看不出來的項目）。
 
 ---
 
@@ -298,13 +332,21 @@ docker inspect $(docker ps -q) \
 
 **目的**：確認 Postgres 不接受無密碼連線（對應 2-C 的 Redis 版本）。
 
+> [!important] 從 host 走 TCP 測，不要 `docker compose exec` 進 container
+> 在 container 內用 `psql` 走 local unix socket，Postgres 預設是 `peer`/`trust`，幾乎一定會通——
+> 那測的是 local socket 信任，不是「網路上能否不帶密碼登入」。要對到真正的威脅面（2-B 的 port 暴露），
+> 必須從 host 對 TCP endpoint 連線、且**不提供密碼**，預期被拒絕。
+>
+> 另注意：compose 的 DB service 名為 **`postgres`**（非 `db`），預設 user 為 **`MailAdmin`**（非 `postgres`）。
+
 ```bash
-docker compose exec -T db psql -U postgres -c '\l' 2>&1 \
-  && echo "WARN: postgres accepts no-password connection" \
-  || echo "PASS: postgres requires auth"
+# 從 host 走 TCP、不帶密碼，預期失敗
+PGPASSWORD= psql -h 127.0.0.1 -p 5432 -U "${DB_USER:-MailAdmin}" -d "${DB_NAME:-Subscriptions}" -c '\q' 2>/dev/null \
+  && echo 'FAIL: postgres accepts no-password TCP login' \
+  || echo 'PASS: postgres rejects no-password TCP login'
 ```
 
-若輸出 `WARN`，任何能到達 Postgres port 的程式都可以不帶密碼登入，需在 `docker-compose.yml` 的 `db` service 確認 `POSTGRES_PASSWORD` 有設定，並確保 `pg_hba.conf` 不允許 `trust`。
+若輸出 `FAIL`，任何能到達 Postgres port 的程式都可以不帶密碼登入，需在 `docker-compose.yml` 的 `postgres` service 確認 `POSTGRES_PASSWORD` 有設定，並確保 `pg_hba.conf` 不允許 `trust`。
 
 ---
 
@@ -420,9 +462,9 @@ Stage 3（Local dev stack）
 ./scripts/vc-local.sh 2>&1 | tee logs/vc-local-$(date +%Y%m%d).log
 
 # Stage 2（逐台機器）
-./scripts/vc-remote.sh user@172.16.127.102 2>&1 | tee logs/vc-mail1-$(date +%Y%m%d).log
-./scripts/vc-remote.sh user@172.16.127.116 2>&1 | tee logs/vc-mail2-$(date +%Y%m%d).log
-./scripts/vc-remote.sh user@172.16.127.117 2>&1 | tee logs/vc-mail3-$(date +%Y%m%d).log
+./scripts/vc-remote.sh mail1@172.16.127.102 2>&1 | tee logs/vc-mail1-$(date +%Y%m%d).log
+./scripts/vc-remote.sh mail2@172.16.127.116 2>&1 | tee logs/vc-mail2-$(date +%Y%m%d).log
+./scripts/vc-remote.sh mail3@172.16.127.117 2>&1 | tee logs/vc-mail3-$(date +%Y%m%d).log
 ```
 
 ---
@@ -585,7 +627,7 @@ logs/vc-mail3-YYYYMMDD.log      # Stage 2 mail3
 
 - 本文件（`vc-proposal.md`）：固定 checklist，每次掃描更新 Known Issues 表格。
 - `scripts/vc-local.sh`：Stage 1 可重複執行的本地掃描腳本。
-- `script/vc-remote.sh`：Stage 2 SSH 遠端檢查腳本。
+- `scripts/vc-remote.sh`：Stage 2 SSH 遠端檢查腳本。
 - 每次掃描產出記錄格式：
 
 ```
