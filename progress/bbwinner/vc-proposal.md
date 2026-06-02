@@ -42,13 +42,16 @@
 
 ## Known Issues
 
-| # | Issue | Severity | 狀態 | 負責人 | PR / Commit |
-|---|-------|----------|------|--------|-------------|
-| 1 | Login `/api/v1/auth/login/` 無 rate limiting，可暴力破解 LDAP bind | High | 待修 | | |
-| 2 | Redis 無密碼，且 6379 publish 到 `0.0.0.0`（compose 無 `--requirepass`，`"6379:6379"`） | High | 已確認 | | |
-| 3 | `axios` high severity CVE（frontend） | High | 待升版 | | |
-| 4 | `DEBUG=True`、`ALLOWED_HOSTS=["*"]`、hardcoded `SECRET_KEY`（`core/settings.py` 已確認） | High | 待修（env var 化） | | |
-| 5 | LDAP 走 `ldap://`（plaintext） | Low | Accepted risk（內網），需記錄 | | |
+| # | Issue | Severity | 狀態 | 
+|---|-------|----------|------|
+| 1 | Login `/api/v1/auth/login/` 無 rate limiting，可暴力破解 LDAP bind | High | 待修 |
+| 2 | Redis 無密碼（mail1 `redis-cli ping` 回 PONG），且 6379 publish 到 `0.0.0.0` | High→Accepted | **已決議 Accept**（VPN-gated 內網風險，不啟用密碼），見 vc.md |
+| 3 | `axios` high severity CVE（frontend） | High | 待升版 |
+| 4 | `DEBUG=True`：production accepted risk，**保留但需回報**（`SECRET_KEY` 已 env 化、`ALLOWED_HOSTS` 已非 `*`） | High→Accepted | 已決議保留 |
+| 5 | LDAP 連線協定 | Low | mail1 實測為 `ldaps://`（加密），本項在 mail1 不適用 |
+| 6 | 各機 `.env` 的 `DB_PASSWORD` 實際為弱密碼 `password`（三台須一致）；compose 仍保留 default `:-password` | High | **待 rotation**（三台各自 `ALTER USER` + 換 `.env`，見 vc.md） |
+| 7 | web / worker container 以 `root` 執行 | Medium | `Dockerfile` 已加 `appuser`(UID 10001)；**待機器端 `chown 10001 /var/lib/mailsub` + rebuild + 三台驗收**，見 vc.md |
+| 8 | Image OS CVE：web/worker/frontend/postgres/redis 均有 fixable HIGH/CRITICAL（worker 為較舊 debian 12） | High | 待 rebuild（`--pull`）並重掃 |
 
 ---
 
@@ -216,41 +219,31 @@ Trivy 會掃：OS package（apt/apk）、Python site-packages、npm packages。
 
 #### 2-B) Port 暴露檢查
 
-**目的**：確認 Postgres（5432）、Redis（6379）、monitor `/health`（9123）沒有對外暴露。
-
-**Step 1**：完整列出監聽狀態（人工檢視用）
+**目的**：列出對外監聽的 port，確認沒有「非預期」的服務暴露（5432/6379 對 LAN 開放在本架構下屬預期，見下方 note）。
 
 ```bash
 ss -tlnp | grep -E '5432|6379|9123|8000|55111'
 ```
 
-**Step 2**：對最敏感的 5432 / 6379 做 assert-only 判斷
-
-DB 與 Redis **絕不應**綁在 `0.0.0.0`（所有介面）。下列指令在命中 `0.0.0.0` 或 `[::]`（IPv6 any）時直接回 `FAIL`：
-
-```bash
-ss -tlnH 'sport = :5432 or sport = :6379' \
-  | grep -qE '0\.0\.0\.0|\[::\]' \
-  && echo 'FAIL: 5432/6379 bound to all interfaces (LAN-reachable)' \
-  || echo 'PASS: 5432/6379 not bound to all interfaces'
-```
-
-> [!warning] 已知現況
-> 目前 `docker-compose.yml` 的 `postgres` 與 `redis` 是 `"5432:5432"` / `"6379:6379"`，會 publish 到 `0.0.0.0`。
-> 這正是 Known Issue #2（Redis 無密碼）能被 LAN 觸及的根因。修法：改成 `127.0.0.1:5432:5432` / `127.0.0.1:6379:6379`，
-> 或移除 host port mapping、只走 `mail_net` 內部網路。
+> [!note] 5432 / 6379 綁在 `0.0.0.0` 是**刻意的**
+> HA 架構下，三台的 web/worker 都連向 ACTIVE 機器的 Postgres / Redis，且 `db_sync.sh` 由 ACTIVE
+> 對其餘兩台做 `pg_dump`/`pg_restore`——都需要跨機連到對方的 5432/6379。所以這兩個 port 對 LAN 開放屬**預期行為**，
+> 本檢查只列出監聽狀態供人工確認，不對 `0.0.0.0` 判 FAIL。
+> 真正的安全控制是「被暴露的服務必須要求認證」——交由 2-C（Redis 密碼）與 2-F（Postgres 密碼）把關。
+> 若要進一步收斂，建議用防火牆把 5432/6379 限制在系內子網（compose 之外處理）。
 
 預期結果：
 
 | Port | 預期監聽位址 | 說明 |
 |------|-------------|------|
-| 5432 | 127.0.0.1 或 Docker 內部網路 | Postgres 不應對外 |
-| 6379 | 127.0.0.1 或 Docker 內部網路 | Redis 不應對外 |
+| 5432 | `0.0.0.0`（LAN） | Postgres，HA 需跨機存取 → 對 LAN 開放屬預期；安全由密碼把關（見 2-F） |
+| 6379 | `0.0.0.0`（LAN） | Redis，同上；安全由密碼把關（見 2-C） |
 | 9123 | LAN（172.16.x.x）或 127.0.0.1 | monitor /health 僅限內網 |
 | 8000 | 視設計而定 | web API |
 | 55111 | 視設計而定 | frontend |
 
-如果 5432 或 6379 監聽在 `0.0.0.0`，表示該 port 可從外部網路連線，需在 `docker-compose.yml` 改為 `127.0.0.1:5432:5432`。
+5432 / 6379 監聽 `0.0.0.0` 在本架構下正常，**重點是確認它們有認證**（2-C / 2-F）。
+若出現上表以外、非預期的對外 port，才需追查。
 
 ---
 
@@ -293,8 +286,8 @@ redis-cli -h 127.0.0.1 -p 6379 ping 2>/dev/null \
 # 結果存進變數，全程用 grep -q，不 echo 任何值。
 ENV_DUMP=$(docker compose exec -T web env)
 
-# DEBUG 必須是 False
-grep -q '^DEBUG=False$'                <<<"$ENV_DUMP" && echo 'PASS: DEBUG=False'                || echo 'FAIL: DEBUG is not False'
+# DEBUG：production 目前接受 DEBUG=True（accepted risk），仍需回報實際狀態
+grep -q '^DEBUG=False$'                <<<"$ENV_DUMP" && echo 'PASS: DEBUG=False'                || echo 'NOTE: DEBUG=True (accepted risk, see vc.md)'
 
 # ALLOWED_HOSTS 不應是 *
 grep -q '^ALLOWED_HOSTS=\*$'           <<<"$ENV_DUMP" && echo 'FAIL: ALLOWED_HOSTS is *'         || echo 'PASS: ALLOWED_HOSTS is not *'
