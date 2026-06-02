@@ -411,119 +411,18 @@ Stage 3（Local dev stack）
 3-B  Login rate limiting（known issue #1，實作後驗證）
 ```
 
-### 快速重跑腳本（Stage 1，可加入 CI）
+### 腳本
+
+見 repo 的 [`/scripts/vc-local.sh`](../../scripts/vc-local.sh) 與 [`/scripts/vc-remote.sh`](../../scripts/vc-remote.sh)。
 
 ```bash
-#!/usr/bin/env bash
-# vc-local.sh — Stage 1 local scan
-set -euo pipefail
+# Stage 1
+./scripts/vc-local.sh 2>&1 | tee logs/vc-local-$(date +%Y%m%d).log
 
-echo "=== [1-A] Secrets: git ls-files ==="
-TRACKED=$(git ls-files .env .env.* 2>/dev/null | grep -v '.env.example' | grep -v '.env.example.role' || true)
-if [ -n "$TRACKED" ]; then
-  echo "FAIL: .env files tracked in git: $TRACKED"
-else
-  echo "PASS: no .env files tracked"
-fi
-
-echo ""
-echo "=== [1-A] Secrets: gitleaks ==="
-docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:latest \
-  detect --source=/repo --no-banner --redact || echo "WARN: gitleaks found findings (review above)"
-
-echo ""
-echo "=== [1-B] Frontend npm audit ==="
-(cd frontend && npm audit --package-lock-only --omit=dev) || true
-
-echo ""
-echo "=== [1-B] Backend pip-audit ==="
-pip-audit -r requirements.txt || true
-
-echo ""
-echo "=== [1-C] Bandit SAST ==="
-bandit -r apps/ -ll || true
-
-echo ""
-echo "=== [1-D] Django deploy check ==="
-docker compose run --rm \
-  -e DJANGO_SETTINGS_MODULE=core.settings \
-  web python manage.py check --deploy || true
-
-echo ""
-echo "=== Done. Review findings above. ==="
-```
-
-使用方式：
-```bash
-chmod +x vc-local.sh
-./vc-local.sh 2>&1 | tee vc-$(date +%Y%m%d).log
-```
-
-### Remote 逐台執行腳本（Stage 2）
-
-```bash
-#!/usr/bin/env bash
-# vc-remote.sh — Stage 2 remote checks
-# Usage: ./vc-remote.sh <user>@<ip>
-set -euo pipefail
-
-TARGET=$1
-echo "=== Running remote VC on $TARGET ==="
-
-ssh "$TARGET" bash << 'REMOTE'
-echo "--- [2-A] Trivy image scan ---"
-for IMAGE in \
-  2026-nasa3-mail-subscription-web:latest \
-  2026-nasa3-mail-subscription-worker:latest \
-  2026-nasa3-mail-subscription-frontend:latest; do
-  echo "=== $IMAGE ==="
-  docker run --rm \
-    -v /var/run/docker.sock:/var/run/docker.sock \
-    aquasec/trivy:latest image \
-    --severity HIGH,CRITICAL \
-    "$IMAGE"
-done
-
-echo "--- [2-B] Port exposure ---"
-ss -tlnp | grep -E '5432|6379|9123|8000|55111' || echo "(no matching ports)"
-
-echo "--- [2-C] Redis unauthenticated access ---"
-redis-cli -h 127.0.0.1 -p 6379 ping 2>/dev/null \
-  && echo "WARN: Redis accepts unauthenticated connections" \
-  || echo "INFO: redis-cli not installed or connection refused"
-
-echo "--- [2-D] Container env vars (key check only) ---"
-docker compose -f ~/mailsub/docker-compose.yml exec -T web env \
-  | grep -E '^(DEBUG|ALLOWED_HOSTS|SECRET_KEY)=' \
-  | sed 's/SECRET_KEY=.*/SECRET_KEY=<redacted>/'
-
-echo "--- [2-E] Docker socket mount ---"
-docker inspect $(docker ps -q) \
-  --format '{{.Name}}: {{range .Mounts}}{{.Source}} {{end}}' \
-  | grep docker.sock && echo "WARN: docker.sock mounted" || echo "PASS: no docker.sock mount"
-
-echo "--- [2-F] Postgres authentication ---"
-docker compose -f ~/mailsub/docker-compose.yml exec -T db psql -U postgres -c '\l' 2>&1 \
-  && echo "WARN: postgres accepts no-password connection" \
-  || echo "PASS: postgres requires auth"
-
-echo "--- [2-G] Container running user ---"
-echo -n "web: "; docker compose -f ~/mailsub/docker-compose.yml exec -T web whoami
-echo -n "worker: "; docker compose -f ~/mailsub/docker-compose.yml exec -T worker whoami
-
-echo "--- [2-I] LDAP URI protocol ---"
-docker compose -f ~/mailsub/docker-compose.yml exec -T web env | grep LDAP_URI
-REMOTE
-
-echo "=== Done: $TARGET ==="
-```
-
-使用方式：
-```bash
-chmod +x vc-remote.sh
-./vc-remote.sh user@172.16.127.102 2>&1 | tee vc-mail1-$(date +%Y%m%d).log
-./vc-remote.sh user@172.16.127.116 2>&1 | tee vc-mail2-$(date +%Y%m%d).log
-./vc-remote.sh user@172.16.127.117 2>&1 | tee vc-mail3-$(date +%Y%m%d).log
+# Stage 2（逐台機器）
+./scripts/vc-remote.sh user@172.16.127.102 2>&1 | tee logs/vc-mail1-$(date +%Y%m%d).log
+./scripts/vc-remote.sh user@172.16.127.116 2>&1 | tee logs/vc-mail2-$(date +%Y%m%d).log
+./scripts/vc-remote.sh user@172.16.127.117 2>&1 | tee logs/vc-mail3-$(date +%Y%m%d).log
 ```
 
 ---
@@ -643,11 +542,50 @@ jobs:
 
 ---
 
+## Result Handling
+
+### 掃描結果的存放與流向
+
+```
+掃描產出
+  │
+  ├─ raw log（logs/vc-*.log）
+  │    └─ 本地保存，gitignore，不得 commit
+  │
+  ├─ findings 摘要 → 更新 vc.md 的 Known Issues 表格 → commit & push
+  │    └─ 其他組員從 repo 讀取
+  │
+  └─ Critical / High findings → 直接通知 admin（email）
+       └─ 只告知 issue 與 severity，不傳送 raw log
+```
+
+### CI vs. 手動腳本分工
+
+| 項目 | CI（自動，每次 PR） | vc-local.sh（手動） | vc-remote.sh（手動，每台機器） |
+|------|-------------------|--------------------|-----------------------------|
+| Secrets scan（gitleaks） | ✓ | — | — |
+| Dependency CVE（pip-audit / npm audit） | ✓ | — | — |
+| Bandit SAST | ✓ | — | — |
+| Django deploy check（`--deploy`） | — | ✓ | — |
+| Image CVE（Trivy） | — | — | ✓ |
+| Port / Redis / Postgres / env var 檢查 | — | — | ✓ |
+
+### Log 命名規則
+
+```
+logs/vc-local-YYYYMMDD.log      # Stage 1（vc-local.sh）
+logs/vc-mail1-YYYYMMDD.log      # Stage 2 mail1
+logs/vc-mail2-YYYYMMDD.log      # Stage 2 mail2
+logs/vc-mail3-YYYYMMDD.log      # Stage 2 mail3
+```
+
+---
+
 ## Deliverables
 
 - 本文件（`vc-proposal.md`）：固定 checklist，每次掃描更新 Known Issues 表格。
-- `vc-local.sh`：Stage 1 可重複執行的本地掃描腳本。
-- `vc-remote.sh`：Stage 2 SSH 遠端檢查腳本。
+- `scripts/vc-local.sh`：Stage 1 可重複執行的本地掃描腳本。
+- `script/vc-remote.sh`：Stage 2 SSH 遠端檢查腳本。
 - 每次掃描產出記錄格式：
 
 ```
