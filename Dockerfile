@@ -11,8 +11,11 @@ ENV PYTHONUNBUFFERED 1
 # Set the working directory
 WORKDIR /app
 
-# Install system dependencies required for LDAP and PostgreSQL
+# Install system dependencies required for LDAP and PostgreSQL.
+# apt-get upgrade patches stale base-image packages (e.g. libgnutls30, libkrb5*)
+# that apt-get install alone leaves untouched — required to clear fixable OS CVEs.
 RUN apt-get update \
+    && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \
         gcc \
         libpq-dev \
