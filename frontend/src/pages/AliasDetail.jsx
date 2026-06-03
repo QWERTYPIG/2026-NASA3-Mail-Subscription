@@ -3,15 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import api from '../api/axios';
 import { toast } from 'react-hot-toast';
 import { Loader2 } from 'lucide-react';
-
-// 1. 修正 Import：使用 TableList 而非 List 或 LayoutList
-import { 
-  Input, 
-  Button, 
-  TableList, 
-  HelpText,
-  PageHeader
-} from '@csie/ui-library';
+import { Input, Button, TableList, HelpText, PageHeader } from '@csie/ui-library';
 
 const AliasDetail = () => {
   const { id } = useParams();
@@ -90,84 +82,58 @@ const AliasDetail = () => {
 
   return (
     <div className="w-full bg-[#F8F9FA] min-h-screen">
-      
       <PageHeader>
-        <PageHeader.TitleArea 
-          title={`別名設定 (${id})`} 
-          breadcrumb="首頁 / 別名管理 / 設定" 
-        />
+        <PageHeader.TitleArea title={`別名設定 (${id})`} breadcrumb="首頁 / 別名管理 / 設定" />
         <PageHeader.TopRight />
         <PageHeader.ActionArea>
-          <Button 
-            type="default" 
-            size="lg" 
-            leftIcon="mdi:arrow-left" 
-            onClick={() => navigate('/manage/aliases')}
-          >
+          <Button type="default" size="lg" leftIcon="mdi:arrow-left" onClick={() => navigate('/manage/aliases')}>
             返回清單
           </Button>
         </PageHeader.ActionArea>
       </PageHeader>
 
       <div className="p-8 max-w-6xl mx-auto grid md:grid-cols-3 gap-8">
-        
-        {/* 左側：基本設定表單 */}
         <div className="md:col-span-1">
           <section className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm sticky top-24 space-y-6">
             <h2 className="text-lg font-bold text-slate-800">基本資訊</h2>
-            
             <form onSubmit={handleUpdateAlias} className="space-y-6">
+              {/* 修正 onChange */}
               <Input 
                 label="顯示名稱"
                 value={alias.display_name || ''}
-                onChange={(e) => setAlias({...alias, display_name: e.target.value})}
+                onChange={(val) => setAlias({...alias, display_name: val})}
               />
-              
+              {/* 修正 onChange */}
               <Input 
                 label="描述說明"
                 value={alias.description || ''}
-                onChange={(e) => setAlias({...alias, description: e.target.value})}
+                onChange={(val) => setAlias({...alias, description: val})}
               />
-              
-              <Button 
-                type="brand" 
-                className="w-full justify-center"
-                disabled={saving}
-                leftIcon={saving ? "mdi:loading" : "mdi:content-save"}
-                onClick={handleUpdateAlias}
-              >
+              <Button type="brand" className="w-full justify-center" disabled={saving} leftIcon={saving ? "mdi:loading" : "mdi:content-save"} onClick={handleUpdateAlias}>
                 {saving ? "儲存中" : "儲存變更"}
               </Button>
             </form>
           </section>
         </div>
 
-        {/* 右側：成員管理清單 */}
         <div className="md:col-span-2 space-y-6">
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-            
             <div className="p-6 bg-slate-50 border-b border-slate-200">
               <h2 className="text-lg font-bold text-slate-800 mb-4">成員管理</h2>
               <form onSubmit={handleAddMember} className="flex gap-4 items-end">
                 <div className="flex-1">
+                  {/* 修正 onChange */}
                   <Input 
                     label="新增成員"
                     placeholder="輸入學生/員工 UID (例如: b13902001)"
                     value={newUid}
-                    onChange={(e) => setNewUid(e.target.value)}
+                    onChange={(val) => setNewUid(val)}
                   />
                 </div>
-                <Button 
-                  type="brand" 
-                  leftIcon="mdi:account-plus"
-                  onClick={handleAddMember}
-                >
-                  加入
-                </Button>
+                <Button type="brand" leftIcon="mdi:account-plus" onClick={handleAddMember}>加入</Button>
               </form>
             </div>
 
-            {/* 2. 完美嵌入 TableList */}
             <div className="p-4">
               {allMembers.length === 0 ? (
                 <div className="p-8 text-center">
@@ -191,12 +157,7 @@ const AliasDetail = () => {
                     {
                       header: '操作',
                       accessor: (d) => (
-                        <Button 
-                          type="danger" 
-                          size="sm" 
-                          leftIcon="mdi:trash-can-outline"
-                          onClick={() => handleRemoveMember(d.uid)}
-                        >
+                        <Button type="danger" size="sm" leftIcon="mdi:trash-can-outline" onClick={() => handleRemoveMember(d.uid)}>
                           移除
                         </Button>
                       )
@@ -206,11 +167,9 @@ const AliasDetail = () => {
               )}
             </div>
           </div>
-
           <HelpText size="L" status="warning">
             管理員注意：強制新增或移除成員將立即生效。該動作會同步更新至資料庫並排入 LDAP 同步佇列。
           </HelpText>
-          
         </div>
       </div>
     </div>

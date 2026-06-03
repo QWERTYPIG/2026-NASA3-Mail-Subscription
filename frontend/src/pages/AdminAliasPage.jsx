@@ -3,8 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import api from '../api/axios';
 import { toast } from 'react-hot-toast';
 import { Loader2, Mail } from 'lucide-react';
-
-// 1. 引入 UI/UX 團隊的元件 (移除不存在或不適用的 InfoIcon)
 import { 
   PageHeader, 
   Button, 
@@ -65,29 +63,16 @@ const AdminAliasPage = () => {
 
   return (
     <div className="w-full bg-[#F8F9FA] min-h-screen">
-      
-      {/* 2. 插槽式 PageHeader */}
       <PageHeader>
-        <PageHeader.TitleArea 
-          title="別名系統管理" 
-          breadcrumb="首頁 / 別名管理" 
-        />
-        
+        <PageHeader.TitleArea title="別名系統管理" breadcrumb="首頁 / 別名管理" />
         <PageHeader.TopRight />
-
         <PageHeader.ActionArea>
-          <Button 
-            type="brand" 
-            size="lg" 
-            leftIcon="mdi:plus" 
-            onClick={() => setShowModal(true)}
-          >
+          <Button type="brand" size="lg" leftIcon="mdi:plus" onClick={() => setShowModal(true)}>
             新增別名
           </Button>
         </PageHeader.ActionArea>
       </PageHeader>
 
-      {/* 3. 主要內容區 */}
       <div className="p-8 max-w-5xl mx-auto">
         <div className="grid gap-4">
           {aliases.map(alias => (
@@ -95,7 +80,6 @@ const AdminAliasPage = () => {
               key={alias.alias_name}
               header={
                 <div className="flex items-center gap-4">
-                  {/* 放回原版的 Lucide Mail 圖示，保留原有的背景色 styling */}
                   <div className="bg-indigo-50 p-2.5 rounded-full text-indigo-600">
                     <Mail size={22} />
                   </div>
@@ -106,69 +90,51 @@ const AdminAliasPage = () => {
               }
               actions={
                 <div className="flex items-center gap-2">
-                  <Button 
-                    type="brand" 
-                    size="sm" 
-                    leftIcon="mdi:cog" 
-                    onClick={() => navigate(`/manage/aliases/${alias.alias_name}`)}
-                  >
+                  <Button type="brand" size="sm" leftIcon="mdi:cog" onClick={() => navigate(`/manage/aliases/${alias.alias_name}`)}>
                     管理設定
                   </Button>
-                  <Button 
-                    type="danger" 
-                    size="sm" 
-                    leftIcon="mdi:trash-can-outline"
-                    onClick={() => handleDelete(alias.alias_name, alias.display_name || alias.alias_name)}
-                  >
+                  <Button type="danger" size="sm" leftIcon="mdi:trash-can-outline" onClick={() => handleDelete(alias.alias_name, alias.display_name || alias.alias_name)}>
                     刪除
                   </Button>
                 </div>
               }
             >
               <div className="mt-2">
-                <Badge 
-                  type="info" 
-                  text={alias.description || "暫無描述"} 
-                />
+                <Badge type="info" text={alias.description || "暫無描述"} />
               </div>
             </RecordCard>
           ))}
         </div>
       </div>
 
-      {/* 新增別名 Modal */}
       {showModal && (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-[100]">
           <form onSubmit={handleCreate} className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8 space-y-6 animate-in zoom-in-95 duration-200">
-            
             <h2 className="text-xl font-bold text-slate-800">建立新郵件別名</h2>
-            
             <div className="space-y-4">
+              {/* 修正 onChange */}
               <Input 
                 label="別名名稱 (例如: security-alerts)"
                 placeholder="輸入別名..."
                 value={newAlias.name}
-                onChange={e => setNewAlias({...newAlias, name: e.target.value})}
+                onChange={(val) => setNewAlias({...newAlias, name: val})}
               />
-              
+              {/* 修正 onChange */}
               <Input 
                 label="描述說明"
                 placeholder="簡單描述此群組用途..."
                 value={newAlias.description}
-                onChange={e => setNewAlias({...newAlias, description: e.target.value})}
+                onChange={(val) => setNewAlias({...newAlias, description: val})}
               />
             </div>
-
             <div className="flex gap-3 pt-4">
               <div className="flex-1" onClick={() => setShowModal(false)}>
                 <Button type="default" className="w-full justify-center">取消</Button>
               </div>
-              
               <div className="flex-1" onClick={handleCreate}>
                 <Button type="brand" className="w-full justify-center">確認建立</Button>
               </div>
             </div>
-
           </form>
         </div>
       )}
