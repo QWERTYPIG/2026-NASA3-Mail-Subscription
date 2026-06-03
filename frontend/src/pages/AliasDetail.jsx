@@ -4,11 +4,11 @@ import api from '../api/axios';
 import { toast } from 'react-hot-toast';
 import { Loader2 } from 'lucide-react';
 
-// 1. 引入 UI/UX 團隊的元件 (已修正為正式匯出的名稱)
+// 1. 修正 Import：使用 TableList 而非 List 或 LayoutList
 import { 
   Input, 
   Button, 
-  List, 
+  TableList, 
   HelpText,
   PageHeader
 } from '@csie/ui-library';
@@ -91,7 +91,6 @@ const AliasDetail = () => {
   return (
     <div className="w-full bg-[#F8F9FA] min-h-screen">
       
-      {/* 2. 統一使用 PageHeader 結構 */}
       <PageHeader>
         <PageHeader.TitleArea 
           title={`別名設定 (${id})`} 
@@ -110,7 +109,6 @@ const AliasDetail = () => {
         </PageHeader.ActionArea>
       </PageHeader>
 
-      {/* 3. 主要內容區 */}
       <div className="p-8 max-w-6xl mx-auto grid md:grid-cols-3 gap-8">
         
         {/* 左側：基本設定表單 */}
@@ -148,7 +146,6 @@ const AliasDetail = () => {
         <div className="md:col-span-2 space-y-6">
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             
-            {/* 新增成員區塊 */}
             <div className="p-6 bg-slate-50 border-b border-slate-200">
               <h2 className="text-lg font-bold text-slate-800 mb-4">成員管理</h2>
               <form onSubmit={handleAddMember} className="flex gap-4 items-end">
@@ -170,14 +167,14 @@ const AliasDetail = () => {
               </form>
             </div>
 
-            {/* 完美嵌入 LayoutList */}
+            {/* 2. 完美嵌入 TableList */}
             <div className="p-4">
               {allMembers.length === 0 ? (
                 <div className="p-8 text-center">
                   <HelpText size="L" status="default">目前無訂閱成員</HelpText>
                 </div>
               ) : (
-                <LayoutList
+                <TableList
                   data={allMembers}
                   columns={[
                     {
