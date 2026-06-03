@@ -129,7 +129,7 @@ WARNINGS:
 
 #### Gitleaks
 
-- 觸發：`push`、`pull_request`
+- 觸發：`push`（**僅 `main`**）、`pull_request`
 - 內容：掃描 git history 是否有 secrets（API key / password / private key）
 - 檔案：`.github/workflows/gitleaks.yml`
 
@@ -146,6 +146,20 @@ WARNINGS:
 - 觸發：`pull_request`
 - 內容：`bandit -r apps/ -ll` 掃 Python code（只顯示 medium 以上）
 - 檔案：`.github/workflows/bandit.yml`
+
+#### 觸發行為（各情境跑哪些）
+
+三個 workflow 皆加 `concurrency`（同一 ref 新 push 會取消尚未跑完的舊 run，避免堆積）。
+
+| 情境 | Gitleaks | Dep-CVE | Bandit |
+|------|----------|---------|--------|
+| push 到 feature branch（無 PR） | — | — | — |
+| 開 PR / push 到 PR branch | ✅（一次） | ✅ | ✅ |
+| merge 進 `main`（= push to main） | ✅ | — | — |
+
+- **重點**：merge 進 main 與「開 PR」**不同**——只有 Gitleaks 會在 main 的 push 重跑；Dep-CVE / Bandit 是在 merge **前**的 PR 跑過，不會在 main 重跑。
+- Gitleaks 之前 `push`（全 branch）+ `pull_request` 會在 PR branch 每次 push **跑兩次**；改 `push: branches: [main]` 後消除重複，coverage 不變（feature branch 一開 PR 即被掃，沒有東西能未掃就進 main）。
+- 修改 commit：`6bdeacb`。
 
 ---
 
