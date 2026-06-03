@@ -323,6 +323,38 @@ docker compose up -d --force-recreate --renew-anon-volumes web worker frontend
   - **若 mail2/3 有其他 host-mount 寫入點**（log 等）一併 `chown` 給 10001，否則 worker 會 permission denied。確認三台都過驗收再算完成。
 
 
+### mail1 / mail2 / mail3，2026-06-03 Final Check
+
+`vc-remote.sh` 跑完三台（`logs/vc-mail{1,2,3}-20260603.log`），結果一致。
+
+| 檢查 | mail1 | mail2 | mail3 | 說明 |
+|------|:--:|:--:|:--:|------|
+| 2-A web image | CLEAN | CLEAN | CLEAN | debian OS + python CVE 已清 ✅ |
+| 2-A worker image | CLEAN | CLEAN | CLEAN | 與 web 對齊 ✅ |
+| 2-A redis:7-alpine | CLEAN | CLEAN | CLEAN | 曾 45H/4C → 0 ✅ |
+| 2-A frontend image | FAIL | FAIL | FAIL | 11 HIGH＝base-image npm bundled（cross-spawn/glob/minimatch/tar），**Accept** |
+| 2-A postgres:15-alpine | FAIL | FAIL | FAIL | gosu Go stdlib（CVE-2026-33814 HTTP/2、CVE-2026-39836 Dial/LookupPort NUL）+ libxml2，**upstream Accept** |
+| 2-B ports | 0.0.0.0 | 0.0.0.0 | 0.0.0.0 | HA 預期；`9123` monitor 三台皆 listen ✅ |
+| 2-C Redis auth | FAIL→Accept | FAIL→Accept | FAIL→Accept | VPN-only，已決議 Accept |
+| 2-D DEBUG | NOTE | NOTE | NOTE | accepted risk |
+| 2-D ALLOWED_HOSTS / SECRET_KEY | PASS | PASS | PASS | |
+| 2-D DB_PASSWORD | **PASS** | **PASS** | **PASS** | 0602 mail1 曾 FAIL → 已 rotate ✅ |
+| 2-E docker.sock | PASS | PASS | PASS | |
+| 2-F postgres no-pw login | PASS | PASS | PASS | |
+| **2-G container user** | **appuser** | **appuser** | **appuser** | **non-root 三台皆過 ✅** |
+| **2-H db_sync.sh perms** | **755** | **755** | **755** | 曾 group-writable → 已修；`monitor.env` `-rw-r-----` OK ✅ |
+| 2-I LDAP protocol | ldaps:// | ldaps:// | ldaps:// | 加密 ✅ |
+
+**相較 0602 mail1 baseline，四項轉綠並在三台維持**：DB_PASSWORD（rotate）、container user（root→appuser）、db_sync.sh（755）、web/worker/redis image（CLEAN）。
+
+**殘留 FAIL 全為既有 Accept**：frontend（base npm、build-time、runtime 打不到 → static-build open decision）、postgres（upstream gosu）、Redis no-auth（VPN-only）。無新增可修項。
+
+**`vc-remote.sh` 已手動確認**：
+```sh
+ls -l /var/lib/mailsub/last_sync          # owner 10001、mtime 新
+curl -s http://127.0.0.1:9123/health      # 非 failback_blocked_stale_sync
+```
+
 #### 其他待辦
 
 - **2-C Redis 無密碼（Known Issue #2）→  Accept（不啟用密碼）**：
