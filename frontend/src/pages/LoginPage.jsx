@@ -3,8 +3,6 @@ import { useNavigate, Navigate } from 'react-router-dom';
 import api from '../api/axios';
 import { toast } from 'react-hot-toast';
 import { Mail } from 'lucide-react';
-
-// 1. 引入 UI 團隊的元件
 import { Input, Button } from '@csie/ui-library';
 
 export default function LoginPage({ currentUser, onLoginSuccess }) {
@@ -45,7 +43,6 @@ export default function LoginPage({ currentUser, onLoginSuccess }) {
     <div className="min-h-[80vh] flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         
-        {/* Logo 區域 */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-16 h-16 bg-indigo-600 text-white rounded-2xl shadow-lg mb-4">
             <Mail size={32} />
@@ -57,21 +54,22 @@ export default function LoginPage({ currentUser, onLoginSuccess }) {
         <div className="bg-white p-8 rounded-3xl shadow-xl shadow-slate-200/50 border border-slate-100">
           <form onSubmit={handleSubmit} className="flex flex-col gap-6">
             
-            {/* 修正為 Input */}
+            {/* 修正 onChange，直接接收字串 */}
             <Input 
               label="帳號名稱"
               placeholder="請輸入帳號"
               value={username}
-              onChange={(e) => setUsername(e.target.value)}
+              onChange={(val) => setUsername(val)}
               disabled={loading}
             />
 
+            {/* 修正 onChange，直接接收字串 */}
             <Input 
               label="密碼"
               type="password"
               placeholder="••••••••"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={(val) => setPassword(val)}
               disabled={loading}
             />
 
