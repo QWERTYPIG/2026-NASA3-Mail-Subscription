@@ -1,0 +1,15 @@
+# Build context for the web/worker image (`COPY . /app/`).
+
+# Secrets — must never be baked into an image layer
+.env
+.env.*
+mockldap_ca.crt
+
+# VCS
+.git
+.gitignore
+
+# Frontend has its own image; the web/worker context is the repo root, so
+# `COPY . /app/` would otherwise pull the whole frontend toolchain in.
+frontend/node_modules
+
