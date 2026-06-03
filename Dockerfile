@@ -24,9 +24,11 @@ RUN apt-get update \
         postgresql-client-${PG_MAJOR} \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
+# Install Python dependencies.
+# Upgrade setuptools/wheel too: their bundled copies (e.g. jaraco.context, wheel)
+# carry fixable HIGH CVEs that Trivy flags even though they are build-time only.
 COPY requirements.txt /app/
-RUN pip install --upgrade pip \
+RUN pip install --upgrade pip setuptools wheel \
     && pip install -r requirements.txt
 
 # The code will be mounted via volumes in docker-compose during development,
