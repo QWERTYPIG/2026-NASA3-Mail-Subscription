@@ -22,9 +22,6 @@
 | `LDAP_CA_CERT_FILE` | （必填，無預設值）| LDAP CA 憑證路徑（container 內可讀取），未設定則拒絕啟動 |
 | `LDAP_BIND_DN` | `uid=mailtest,ou=people,...` | LDAP 服務帳號 DN |
 | `LDAP_BIND_PASSWORD` | （必填）| LDAP 服務帳號密碼 |
-| `SMTP_HOST` | `localhost` | Alert email 用的 SMTP server |
-| `SMTP_PORT` | `25` | SMTP port（Mailpit 用 `8025`）|
-| `ALERT_EMAIL_SENDER` | `mailsub-alert@csie.ntu.edu.tw` | Alert email 寄件人 |
 | `VITE_API_TARGET` | `http://web:8000` | Backend API service URL（HA/外部部署可設為 `http://mailsus.csie.org`） |
 | `VITE_PORT` | `55111` | Frontend development server port（Vite） |
 | `WEB_PORT` | `8000` | monitor 檢查 Django `/api/v1/health/` 的 port |

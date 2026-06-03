@@ -3,8 +3,10 @@
 ## Loki / Alloy integration
 
 Application monitor logs are written to systemd journal by `mailsub-monitor.service`.
-To query web/frontend health events in Grafana Loki, install Alloy on `mail1`,
-`mail2`, and `mail3` and collect that service's journal logs.
+Django-Q worker task logs are emitted as JSON with the `mailsub-worker` logger
+and collected from the worker container logs. To query these events in Grafana
+Loki, install Alloy on `mail1`, `mail2`, and `mail3` and collect the host
+journal / container syslog logs.
 
 Useful Loki queries:
 
@@ -20,8 +22,13 @@ Useful Loki queries:
 {unit="mailsub-monitor.service"} |= "\"service\":\"frontend\"" |= "serving_health_down"
 ```
 
-Monitor log messages are JSON objects with fields such as `level`, `logger`,
-`event`, `message`, `service`, `check`, `target`, and `error`.
+```logql
+{container=~".*worker.*"} |= "\"logger\":\"mailsub-worker\"" |= "ldap_connect_failed"
+```
+
+Monitor and worker log messages are JSON objects with fields such as `level`,
+`logger`, `event`, `message`, `service`, `check`, `target`, `alias_name`,
+`user_uid`, and `error`.
 
 ## Legacy rsyslog collection
 

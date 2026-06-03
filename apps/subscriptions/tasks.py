@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import ssl
@@ -12,11 +13,22 @@ from ldap3.core.exceptions import (
     LDAPNoSuchAttributeResult,
 )
 
-from core.mail import send_alert_email
-
 from .models import Alias, AliasTaskQueue, UserTaskQueue
 
-logger = logging.getLogger(__name__)
+LOGGER_NAME = "mailsub-worker"
+logger = logging.getLogger(LOGGER_NAME)
+
+
+def log_event(level: int, event: str, message: str, **fields: object) -> None:
+    """Emit one JSON log event for journal, rsyslog, and Loki ingestion."""
+    payload: dict[str, object] = {
+        "level": logging.getLevelName(level),
+        "logger": LOGGER_NAME,
+        "event": event,
+        "message": message,
+    }
+    payload.update({key: value for key, value in fields.items() if value is not None})
+    logger.log(level, json.dumps(payload, sort_keys=True, default=str))
 
 # ---------------------------------------------------------------------------
 # LDAP constants
@@ -50,7 +62,13 @@ def _with_retry(fn, *args, **kwargs):
         try:
             return fn(*args, **kwargs)
         except LDAPException as exc:
-            logger.warning("LDAP error, retrying in %.1fs: %s", delay, exc)
+            log_event(
+                logging.WARNING,
+                "ldap_retry",
+                "LDAP error, retrying",
+                delay_seconds=delay,
+                error=str(exc),
+            )
             time.sleep(delay)
     # Final attempt — no sleep afterwards
     return fn(*args, **kwargs)
@@ -59,14 +77,6 @@ def _with_retry(fn, *args, **kwargs):
 # ---------------------------------------------------------------------------
 # LDAP connection
 # ---------------------------------------------------------------------------
-
-
-ALERT_RECIPIENTS = [
-    "chilfox@csie.ntu.edu.tw",
-    "qwertypig@csie.ntu.edu.tw",
-    "bbwinner@csie.ntu.edu.tw",
-]
-
 
 def _connect() -> Connection:
     if not LDAP_CA_CERT_FILE:
@@ -84,10 +94,13 @@ def _connect() -> Connection:
             raise_exceptions=True,
         )
     except LDAPException as exc:
-        send_alert_email(
-            recipients=ALERT_RECIPIENTS,
-            subject="LDAP Connection Failure",
-            body=f"Failed to connect to LDAP server at {LDAP_URI}.\n\nError: {exc}",
+        log_event(
+            logging.ERROR,
+            "ldap_connect_failed",
+            "failed to connect to LDAP",
+            ldap_uri=LDAP_URI,
+            bind_dn=LDAP_BIND_DN,
+            error=str(exc),
         )
         raise
     return conn
@@ -130,9 +143,11 @@ def flush_alias_tasks(conn: Connection) -> None:
                 except LDAPEntryAlreadyExistsResult:
                     # Entry already exists in LDAP — desired state reached,
                     # no retry needed.
-                    logger.info(
-                        "flush_alias_tasks: %s already exists in LDAP, skipping add",
-                        task.alias_name,
+                    log_event(
+                        logging.INFO,
+                        "alias_already_exists",
+                        "alias already exists in LDAP, skipping add",
+                        alias_name=task.alias_name,
                     )
 
             elif task.action == "remove":
@@ -145,19 +160,23 @@ def flush_alias_tasks(conn: Connection) -> None:
         except LDAPException as exc:
             # All retries exhausted — leave row in queue; it retains its id so
             # it will still be processed first next flush
-            logger.error(
-                "flush_alias_tasks: gave up on %s %s — %s",
-                task.action,
-                task.alias_name,
-                exc,
+            log_event(
+                logging.ERROR,
+                "alias_task_failed",
+                "gave up on alias task",
+                action=task.action,
+                alias_name=task.alias_name,
+                error=str(exc),
             )
             failures.append(f"  - {task.action} {task.alias_name}: {exc}")
 
     if failures:
-        send_alert_email(
-            recipients=ALERT_RECIPIENTS,
-            subject="LDAP Alias Task Failures",
-            body=f"{len(failures)} alias task(s) failed during flush:\n" + "\n".join(failures),
+        log_event(
+            logging.ERROR,
+            "alias_flush_failed",
+            "alias task failures during flush",
+            failure_count=len(failures),
+            failures=failures,
         )
 
 
@@ -171,12 +190,16 @@ def flush_user_tasks(conn: Connection) -> None:
         try:
             if task.action == "add":
                 try:
-                    _with_retry(conn.modify, dn, {"uniqueMember": [(MODIFY_ADD, [member])]})
+                    _with_retry(
+                        conn.modify, dn, {"uniqueMember": [(MODIFY_ADD, [member])]}
+                    )
                 except LDAPAttributeOrValueExistsResult:
-                    logger.info(
-                        "flush_user_tasks: %s already a member of %s, skipping add",
-                        task.user_uid,
-                        task.alias_name,
+                    log_event(
+                        logging.INFO,
+                        "user_already_member",
+                        "user already a member of alias, skipping add",
+                        user_uid=task.user_uid,
+                        alias_name=task.alias_name,
                     )
             elif task.action == "remove":
                 try:
@@ -184,29 +207,37 @@ def flush_user_tasks(conn: Connection) -> None:
                         conn.modify, dn, {"uniqueMember": [(MODIFY_DELETE, [member])]}
                     )
                 except LDAPNoSuchAttributeResult:
-                    logger.info(
-                        "flush_user_tasks: %s not a member of %s, skipping remove",
-                        task.user_uid,
-                        task.alias_name,
+                    log_event(
+                        logging.INFO,
+                        "user_not_member",
+                        "user not a member of alias, skipping remove",
+                        user_uid=task.user_uid,
+                        alias_name=task.alias_name,
                     )
 
             task.delete()
 
         except LDAPException as exc:
-            logger.error(
-                "flush_user_tasks: gave up on %s %s @ %s — %s",
-                task.action,
-                task.user_uid,
-                task.alias_name,
-                exc,
+            log_event(
+                logging.ERROR,
+                "user_task_failed",
+                "gave up on user task",
+                action=task.action,
+                user_uid=task.user_uid,
+                alias_name=task.alias_name,
+                error=str(exc),
             )
-            failures.append(f"  - {task.action} {task.user_uid} @ {task.alias_name}: {exc}")
+            failures.append(
+                f"  - {task.action} {task.user_uid} @ {task.alias_name}: {exc}"
+            )
 
     if failures:
-        send_alert_email(
-            recipients=ALERT_RECIPIENTS,
-            subject="LDAP User Task Failures",
-            body=f"{len(failures)} user task(s) failed during flush:\n" + "\n".join(failures),
+        log_event(
+            logging.ERROR,
+            "user_flush_failed",
+            "user task failures during flush",
+            failure_count=len(failures),
+            failures=failures,
         )
 
 
@@ -247,11 +278,11 @@ def run_consistency_check(conn: Connection) -> None:
         Alias.objects.exclude(alias_name__in=ldap_alias_names).delete()
 
     except Exception as exc:
-        logger.error("run_consistency_check: failed — %s", exc)
-        send_alert_email(
-            recipients=ALERT_RECIPIENTS,
-            subject="LDAP Consistency Check Failure",
-            body=f"run_consistency_check failed:\n\n{exc}",
+        log_event(
+            logging.ERROR,
+            "consistency_check_failed",
+            "run_consistency_check failed",
+            error=str(exc),
         )
         raise
 
@@ -271,11 +302,19 @@ def flush_ldap_tasks() -> None:
     longer than the 3-minute schedule interval.
     """
     if os.environ.get("FLUSH_ENABLED", "1") != "1":
-        logger.info("flush_ldap_tasks: FLUSH_ENABLED is not 1, skipping")
+        log_event(
+            logging.INFO,
+            "flush_disabled",
+            "FLUSH_ENABLED is not 1, skipping",
+        )
         return
     acquired = cache.add(FLUSH_LOCK_KEY, "1", FLUSH_LOCK_TTL)
     if not acquired:
-        logger.info("flush_ldap_tasks: previous flush still running, skipping")
+        log_event(
+            logging.INFO,
+            "flush_lock_busy",
+            "previous flush still running, skipping",
+        )
         return
 
     try:
@@ -287,11 +326,11 @@ def flush_ldap_tasks() -> None:
         finally:
             conn.unbind()
     except Exception as exc:
-        logger.exception("flush_ldap_tasks: unexpected error")
-        send_alert_email(
-            recipients=ALERT_RECIPIENTS,
-            subject="LDAP Flush Unexpected Error",
-            body=f"flush_ldap_tasks failed with an unexpected error:\n\n{exc}",
+        log_event(
+            logging.ERROR,
+            "flush_unexpected_error",
+            "flush_ldap_tasks failed with an unexpected error",
+            error=str(exc),
         )
     finally:
         cache.delete(FLUSH_LOCK_KEY)

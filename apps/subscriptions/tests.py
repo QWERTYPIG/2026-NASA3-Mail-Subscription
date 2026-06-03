@@ -1,4 +1,6 @@
-from unittest.mock import MagicMock, call, patch
+import json
+import logging
+from unittest.mock import MagicMock, patch
 
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
@@ -9,7 +11,7 @@ from rest_framework.test import APIClient
 
 from .models import Alias, AliasTaskQueue, UserTaskQueue
 from .serializers import UserSubscriptionUpdateSerializer
-from .tasks import flush_alias_tasks, flush_user_tasks, run_consistency_check
+from .tasks import flush_alias_tasks, flush_user_tasks, log_event, run_consistency_check
 
 
 class SubscriptionModelsTest(TestCase):
@@ -56,6 +58,50 @@ class HealthEndpointTest(SimpleTestCase):
 
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json(), {"status": "ok"})
+
+
+class TaskLoggingTest(SimpleTestCase):
+    def test_log_event_outputs_json(self):
+        logger = logging.getLogger("mailsub-worker")
+
+        with self.assertLogs(logger, level="ERROR") as captured:
+            log_event(
+                logging.ERROR,
+                "ldap_connect_failed",
+                "failed to connect to LDAP",
+                ldap_uri="ldaps://ldap.example:636",
+                error="timeout",
+                empty=None,
+            )
+
+        payload = json.loads(captured.output[0].split(":", 2)[-1].strip())
+        self.assertEqual(payload["level"], "ERROR")
+        self.assertEqual(payload["logger"], "mailsub-worker")
+        self.assertEqual(payload["event"], "ldap_connect_failed")
+        self.assertEqual(payload["message"], "failed to connect to LDAP")
+        self.assertEqual(payload["ldap_uri"], "ldaps://ldap.example:636")
+        self.assertEqual(payload["error"], "timeout")
+        self.assertNotIn("empty", payload)
+
+    @patch.dict("os.environ", {"LDAP_CA_CERT_FILE": "/tmp/ca.pem"})
+    @patch("apps.subscriptions.tasks.Connection")
+    @patch("apps.subscriptions.tasks.Server")
+    @patch("apps.subscriptions.tasks.Tls")
+    def test_connect_failure_logs_structured_error(
+        self, mock_tls, mock_server, mock_connection
+    ):
+        from .tasks import _connect
+
+        mock_connection.side_effect = LDAPException("timeout")
+        logger = logging.getLogger("mailsub-worker")
+
+        with self.assertLogs(logger, level="ERROR") as captured:
+            with self.assertRaises(LDAPException):
+                _connect()
+
+        payload = json.loads(captured.output[0].split(":", 2)[-1].strip())
+        self.assertEqual(payload["event"], "ldap_connect_failed")
+        self.assertEqual(payload["error"], "timeout")
 
 
 class FlushAliasTasksTest(TestCase):
@@ -514,28 +560,44 @@ class UserSubscriptionUpdateApiTest(TestCase):
         self.assertEqual(first.status_code, 202)
         self.assertEqual(second.status_code, 429)
 
-class ConnectAlertTest(TestCase):
-    @patch("apps.subscriptions.tasks.send_alert_email")
+class ConnectLoggingTest(SimpleTestCase):
     @patch("apps.subscriptions.tasks.Connection")
-    def test_sends_alert_on_ldap_connection_failure(self, mock_conn_cls, mock_alert):
+    @patch("apps.subscriptions.tasks.Server")
+    @patch("apps.subscriptions.tasks.Tls")
+    def test_logs_on_ldap_connection_failure(
+        self, mock_tls, mock_server, mock_conn_cls
+    ):
         mock_conn_cls.side_effect = LDAPException("connection refused")
 
         from apps.subscriptions.tasks import _connect
-        with self.assertRaises(LDAPException):
+        logger = logging.getLogger("mailsub-worker")
+
+        with self.assertLogs(logger, level="ERROR") as captured:
+            with self.assertRaises(LDAPException):
+                _connect()
+
+        payload = json.loads(captured.output[0].split(":", 2)[-1].strip())
+        self.assertEqual(payload["event"], "ldap_connect_failed")
+        self.assertEqual(payload["error"], "connection refused")
+
+    @patch("apps.subscriptions.tasks.Connection")
+    @patch("apps.subscriptions.tasks.Server")
+    @patch("apps.subscriptions.tasks.Tls")
+    def test_no_error_log_on_successful_connection(
+        self, mock_tls, mock_server, mock_conn_cls
+    ):
+        from apps.subscriptions.tasks import _connect
+        logger = logging.getLogger("mailsub-worker")
+
+        with patch.object(logger, "log") as mock_log:
             _connect()
 
-        mock_alert.assert_called_once()
-        call_kwargs = mock_alert.call_args[1]
-        self.assertEqual(call_kwargs["subject"], "LDAP Connection Failure")
-        self.assertIn("chilfox@csie.ntu.edu.tw", call_kwargs["recipients"])
-
-    @patch("apps.subscriptions.tasks.send_alert_email")
-    @patch("apps.subscriptions.tasks.Connection")
-    def test_no_alert_on_successful_connection(self, mock_conn_cls, mock_alert):
-        # 正常連線不該寄信
-        from apps.subscriptions.tasks import _connect
-        _connect()
-        mock_alert.assert_not_called()
+        error_calls = [
+            call_args
+            for call_args in mock_log.call_args_list
+            if call_args.args and call_args.args[0] >= logging.ERROR
+        ]
+        self.assertEqual(error_calls, [])
 
 class AdminAliasDeleteApiTest(TestCase):
     def setUp(self):
