@@ -161,7 +161,6 @@ Run the [scripts](../../scripts/vc-remote.sh) locally
 
 ### Results — mail1 (172.16.127.102)，2026-06-02
 
-完整輸出：[mail1 log](../../logs/vc-mail1-20260602.log)
 
 #### Runtime config checks (2-B ~ 2-I)
 
@@ -232,12 +231,10 @@ docker compose up -d
 
 #### 重掃 — mail1，2026-06-03
 
-完整輸出：[mail1 0603 log](../../logs/vc-mail1-20260603.log)
-
 | Image | 仍 FAIL 的內容 | 狀態 |
 |-------|---------------|------|
-| `…-web` / `…-worker` | debian OS CVE **已清空**（`libgnutls30` / `libkrb5*` 消失）；剩 3 HIGH = `jaraco.context`(CVE-2026-23949)、`wheel`，皆 setuptools 內附、build-time only | repo 已修，待 rebuild 重驗 |
-| `…-frontend` | 11 HIGH：`cross-spawn` / `glob` / `minimatch` / `tar`，實為**舊 image node_modules 殘留**（現行 tree 已乾淨） | rebuild `--no-cache` 即清；根本解另立提案 |
+| `…-web` / `…-worker` | debian OS CVE **已清空**（`libgnutls30` / `libkrb5*` 消失）；python `jaraco.context` / `wheel` 也已清 | **0603 rebuild 後 0，CLEAN** ✅ |
+| `…-frontend` | 11 HIGH：`cross-spawn` / `glob` / `minimatch` / `tar`，實為 **base image `node:20-alpine` 內 npm 自帶的 bundled deps**（`/usr/local/lib/node_modules/npm/...`），**非專案依賴** | build-time only、**Accept**；根本解 = 靜態 build 提案 |
 | `postgres:15-alpine` | `libxml2`(1 HIGH) + `gosu` 的 Go `stdlib`(14 HIGH / 1 CRIT)，baked 在官方 image 內 | upstream 依賴，**Accept** |
 | `redis:7-alpine` | image 乾淨（0）；唯一 FAIL 是 2-C 無密碼 | 已決議 Accept（見上） |
 
@@ -248,36 +245,45 @@ docker compose up -d
 - **web/worker — python（jaraco.context / wheel）**：build-time only，不被執行期 import。
   - repo 已修：`Dockerfile` 改 `pip install --upgrade pip setuptools wheel`（commit `2dab8c4`）→ 待 rebuild 重掃。
   - 若 rebuild 後 Trivy 仍報 `setuptools/_vendor/` 內的 copy → frozen build artifact、無 runtime path，記錄為 Accept。
-- **frontend — 11 dev-dep CVE（`cross-spawn` / `glob` / `minimatch` / `tar`）**：實為**舊 image node_modules** 殘留，非現行依賴。
-  - 重新產生的 `frontend/package-lock.json` 已乾淨：`tar` / `glob` **已不在 dependency tree**（vite 8 / eslint 9 已不再帶）、`minimatch` 9.0.9、`cross-spawn` 7.0.6，皆已 patched。
-  - 所以**不需要 overrides / 不需要升版**；被掃出來是因為 image 還是用舊 node_modules build 的。**乾淨 rebuild 即清掉**：
-    ```sh
-    docker compose build --no-cache frontend
-    docker compose up -d --force-recreate frontend
-    # 確認 image 內實際版本
-    docker compose run --rm frontend npm ls minimatch cross-spawn tar glob
-    # 無 tar/glob、minimatch 9.0.9、cross-spawn 7.0.6 即 OK
-    ./scripts/vc-remote.sh mail1@172.16.127.102 2>&1 | tee logs/vc-mail1-$(date +%Y%m%d).log
-    ```
-  - 注意 `npm audit fix` 報 0 ≠ 乾淨：npm advisory DB 未必收錄這些 2026 CVE，且 `audit fix` 不做 breaking major bump；Trivy 用另一套 DB，兩者範圍不同。判斷以「實際 image 內版本」為準。
-  - **根本解**（脫離 dev-server 模型，改 multi-stage 靜態 build 由 nginx 提供）牽涉 serving model + mail4 nginx，**另立提案**：[frontend-static-build-proposal.md](./frontend-static-build-proposal.md)。
+- **frontend — 11 HIGH（`cross-spawn` / `glob` / `minimatch` / `tar`）→ 來源是 base image 的 npm，非專案依賴**：
+  - **關鍵：看 Trivy 的 Target 路徑**。被報的全在 `usr/local/lib/node_modules/npm/node_modules/...`，也就是 `node:20-alpine` **base image 內附的 npm CLI 自帶的 libraries**。專案自己的 `app/node_modules/...` 全部掃 **0**。
+  - 這四個是 **npm 內部用的工具套件**（build-time，runtime 不會被呼叫）：
+    - `cross-spawn`：跨平台啟動子行程（npm 跑 script 用）。CVE-2024-21538 = ReDoS。
+    - `glob`：用萬用字元找檔案（`*.js`）。CVE-2025-64756 = 惡意檔名觸發 command injection。
+    - `minimatch`：glob pattern → regex 的比對引擎（glob 的核心）。CVE = 特製 pattern 造成 catastrophic backtracking（DoS）。
+    - `tar`：解/打包 `.tar`（npm 解壓 package tarball 用）。CVE = 惡意 archive 透過 path traversal / hardlink 覆寫檔案。
+  - **所以 `rm -rf node_modules` / `.dockerignore` / `npm install` 都無效**——它們動的是專案 deps，不是 npm 自帶的那份。0603 多次 rebuild 後版本完全沒變（`tar 6.2.1` / `glob 10.4.2` / `minimatch 9.0.5` / `cross-spawn 7.0.3`）即為此。
+  - **Triage**：build-time tooling、runtime（`vite dev` 服務）不會呼叫 npm，遠端打不到 → real-world 風險低。
+  - **處置**：
+    - **Accept**（記錄為 base-image npm-bundled、build-time-only）；不採 `npm install -g npm@latest` 暫行（純降數字、npm 永遠 re-bundle，無實質效益）。
+    - **根本解 = multi-stage 靜態 build**（node build → `nginx:alpine` 服務 `dist/`，最終 image 無 node/npm → 11 個全消）。frontend container 只在 mail1-3，可讓容器內 nginx 維持 listen `55111` 並自行 proxy `/api`，使 mail4 RR 不需改。牽涉 serving model／`/api` proxy 位置，已登錄為 open decision，見 [open-decisions.md](../../docs/open-decisions.md)；決定前維持 Accept。
+  - 注意 `npm audit fix` 報 0 ≠ image 乾淨：npm audit 只看專案 deps（且不收錄這些 base-image npm libs），Trivy 掃整個 image filesystem，兩者範圍不同。判斷以「Trivy 的 Target 路徑 + 實際版本」為準。
 - **postgres:15-alpine — gosu Go stdlib / libxml2**：image 由官方建，我們不 build 它；只能 `docker compose pull postgres` 等上游 rebuild gosu（常落後）。比照其他 accepted-risk，**記錄為 upstream 依賴風險**。
   ```
   docker compose pull postgres
   docker compose up -d postgres
   ```
 
-#### 2-H `db_sync.sh` group-writable
+#### 再掃一次
+
+```sh
+sudo rm -rf frontend/node_modules
+
+# Rebuild the self-built images WITHOUT cache (so apt upgrade / pip upgrade /
+#    .dockerignore actually take effect — a plain rebuild or recreate won't).
+docker compose build --pull --no-cache web worker frontend
+
+# Swap running containers onto the new images.
+#    --renew-anon-volumes refreshes the frontend's /app/node_modules volume so it
+#    picks up the clean image build (otherwise the old anon volume lingers).
+docker compose up -d --force-recreate --renew-anon-volumes web worker frontend
+```
+
+### 2-H `db_sync.sh` group-writable
 
 機器上 `chmod 755 ~/2026-NASA3-Mail-Subscription/scripts/db_sync.sh`。
 
-#### 其他待辦
-
-- **2-C Redis 無密碼（Known Issue #2）→  Accept（不啟用密碼）**：
-  - **決策依據**：5432/6379 僅在 VPN 內可達，外部網路無法觸及；比照 DEBUG、LDAP 內網等既有 accepted-risk 立場處理。
-  - **殘留風險（記錄即可，不處理）**：VPN 內任一 host（含被入侵的內網機器）仍可 `redis-cli -h <active> FLUSHDB`（清掉待 flush 的 LDAP 任務）或刪 rate-limit key。
-  - **未來若要再收斂**（非本次範圍）：首選防火牆 allowlist（只放行三台 mail IP 連 5432/6379，不動 app/monitor）；Redis 密碼（`--requirepass`）屬 defense-in-depth，且會牽動 `scripts/monitor/monitor.py:799-800`（failover 時重寫無密碼 Redis URL），需與 monitor owner 協調，故暫不做。
-- **2-G container 跑 root（Known Issue #7，Medium）→ repo 已改非 root，待機器端配套 + 實測**：
+### 2-G Docker non-root user
   - **repo 已做**：`Dockerfile` 末段建立固定 `appuser`（UID/GID **10001**）、`chown -R appuser /app`、`USER appuser`。web/worker 共用此 image。
   - **為何要固定 UID 10001**：worker 會寫 `LAST_SYNC_FILE`（bind-mount 自 host 的 `/var/lib/mailsub`，預設 root-owned）。若 worker 以非 root 跑卻無法寫該目錄，`monitor.py` 會讀到過舊/缺失的 `last_sync` → **暫停 failback**（`docs/HA.md`）。固定 UID 才能在 host 端確定性地 `chown`。
   - **機器上需做（mail1/2/3，rebuild 前先做）**：
@@ -291,11 +297,22 @@ docker compose up -d
     ```
   - **驗收（一定要測，先在 mail1）**：
     ```sh
+    docker compose exec web id        # expect uid=10001(appuser)
+    docker compose exec worker id     # expect uid=10001(appuser)
     docker compose exec -T web whoami      # 預期 appuser（非 root）
     docker compose exec -T worker whoami   # 預期 appuser
+    
     # worker 能寫 last_sync：等一個 SYNC_INTERVAL 或手動觸發後
     ls -l /var/lib/mailsub/last_sync       # mtime 有更新、owner 10001
     curl -s http://127.0.0.1:9123/health   # monitor 讀得到 last_sync、failback 未因 stale 暫停
     ```
   - **若 mail2/3 有其他 host-mount 寫入點**（log 等）一併 `chown` 給 10001，否則 worker 會 permission denied。確認三台都過驗收再算完成。
+
+
+#### 其他待辦
+
+- **2-C Redis 無密碼（Known Issue #2）→  Accept（不啟用密碼）**：
+  - **決策依據**：5432/6379 僅在 VPN 內可達，外部網路無法觸及；比照 DEBUG、LDAP 內網等既有 accepted-risk 立場處理。
+  - **殘留風險（記錄即可，不處理）**：VPN 內任一 host（含被入侵的內網機器）仍可 `redis-cli -h <active> FLUSHDB`（清掉待 flush 的 LDAP 任務）或刪 rate-limit key。
+  - **未來若要再收斂**（非本次範圍）：首選防火牆 allowlist（只放行三台 mail IP 連 5432/6379，不動 app/monitor）；Redis 密碼（`--requirepass`）屬 defense-in-depth，且會牽動 `scripts/monitor/monitor.py:799-800`（failover 時重寫無密碼 Redis URL），需與 monitor owner 協調，故暫不做。
 
