@@ -1,0 +1,3 @@
+# Stop the stale host node_modules from clobbering the image's
+# `RUN npm install` result via `COPY . .`.
+node_modules
