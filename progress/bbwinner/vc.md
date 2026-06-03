@@ -224,7 +224,50 @@ docker compose up -d
 - web 是 debian 13、worker 是 debian 12 → 兩者由不同時間 build。`--pull --no-cache` 會讓兩者對齊到同一 base，順帶清掉 worker 多出的 CVE。
 - 殘留項目逐筆判斷：無法升版者記錄理由與到期日（依 proposal 的 Triage 分級）。
 
-#### **2-H `db_sync.sh` group-writable**
+**After the rebuild（0602）**
+
+- redis:7-alpine: was 45 HIGH / 4 CRIT → now 0, clean PASS ✅
+- web: was debian 13.5 → now 12.14, aligned with worker (the base-mismatch anomaly is gone) ✅
+- alpine bases bumped to 3.23.4
+
+#### 重掃 — mail1，2026-06-03
+
+完整輸出：[mail1 0603 log](../../logs/vc-mail1-20260603.log)
+
+| Image | 仍 FAIL 的內容 | 狀態 |
+|-------|---------------|------|
+| `…-web` / `…-worker` | debian OS CVE **已清空**（`libgnutls30` / `libkrb5*` 消失）；剩 3 HIGH = `jaraco.context`(CVE-2026-23949)、`wheel`，皆 setuptools 內附、build-time only | repo 已修，待 rebuild 重驗 |
+| `…-frontend` | 11 HIGH：`cross-spawn` / `glob` / `minimatch` / `tar`，實為**舊 image node_modules 殘留**（現行 tree 已乾淨） | rebuild `--no-cache` 即清；根本解另立提案 |
+| `postgres:15-alpine` | `libxml2`(1 HIGH) + `gosu` 的 Go `stdlib`(14 HIGH / 1 CRIT)，baked 在官方 image 內 | upstream 依賴，**Accept** |
+| `redis:7-alpine` | image 乾淨（0）；唯一 FAIL 是 2-C 無密碼 | 已決議 Accept（見上） |
+
+**處置**
+
+- **web/worker — debian OS（libgnutls30 / libkrb5*）**：根因為 `Dockerfile` 只 `apt-get install`、從不 `upgrade`，base 舊套件永遠留著。
+  - repo 已修：`Dockerfile` 加 `apt-get upgrade -y`（commit `f9c7b0c`）→ **0603 已驗證消失** ✅
+- **web/worker — python（jaraco.context / wheel）**：build-time only，不被執行期 import。
+  - repo 已修：`Dockerfile` 改 `pip install --upgrade pip setuptools wheel`（commit `2dab8c4`）→ 待 rebuild 重掃。
+  - 若 rebuild 後 Trivy 仍報 `setuptools/_vendor/` 內的 copy → frozen build artifact、無 runtime path，記錄為 Accept。
+- **frontend — 11 dev-dep CVE（`cross-spawn` / `glob` / `minimatch` / `tar`）**：實為**舊 image node_modules** 殘留，非現行依賴。
+  - 重新產生的 `frontend/package-lock.json` 已乾淨：`tar` / `glob` **已不在 dependency tree**（vite 8 / eslint 9 已不再帶）、`minimatch` 9.0.9、`cross-spawn` 7.0.6，皆已 patched。
+  - 所以**不需要 overrides / 不需要升版**；被掃出來是因為 image 還是用舊 node_modules build 的。**乾淨 rebuild 即清掉**：
+    ```sh
+    docker compose build --no-cache frontend
+    docker compose up -d --force-recreate frontend
+    # 確認 image 內實際版本
+    docker compose run --rm frontend npm ls minimatch cross-spawn tar glob
+    # 無 tar/glob、minimatch 9.0.9、cross-spawn 7.0.6 即 OK
+    ./scripts/vc-remote.sh mail1@172.16.127.102 2>&1 | tee logs/vc-mail1-$(date +%Y%m%d).log
+    ```
+  - 注意 `npm audit fix` 報 0 ≠ 乾淨：npm advisory DB 未必收錄這些 2026 CVE，且 `audit fix` 不做 breaking major bump；Trivy 用另一套 DB，兩者範圍不同。判斷以「實際 image 內版本」為準。
+  - **根本解**（脫離 dev-server 模型，改 multi-stage 靜態 build 由 nginx 提供）牽涉 serving model + mail4 nginx，**另立提案**：[frontend-static-build-proposal.md](./frontend-static-build-proposal.md)。
+- **postgres:15-alpine — gosu Go stdlib / libxml2**：image 由官方建，我們不 build 它；只能 `docker compose pull postgres` 等上游 rebuild gosu（常落後）。比照其他 accepted-risk，**記錄為 upstream 依賴風險**。
+  ```
+  docker compose pull postgres
+  docker compose up -d postgres
+  ```
+
+#### 2-H `db_sync.sh` group-writable
 
 機器上 `chmod 755 ~/2026-NASA3-Mail-Subscription/scripts/db_sync.sh`。
 
