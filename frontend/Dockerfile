@@ -4,7 +4,7 @@ FROM node:20-alpine
 WORKDIR /app
 
 # Copy package files and install dependencies
-COPY package*.json ./
+COPY package*.json .npmrc ./
 RUN npm install
 
 # Copy the rest of the frontend code

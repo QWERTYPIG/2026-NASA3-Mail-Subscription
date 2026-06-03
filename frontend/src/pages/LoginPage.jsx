@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import { useNavigate, Navigate } from 'react-router-dom';
 import api from '../api/axios';
 import { toast } from 'react-hot-toast';
-import { LogIn, Lock, User, Loader2, Mail } from 'lucide-react';
+import { Mail } from 'lucide-react';
+import { Input, Button } from '@csie/ui-library';
 
 export default function LoginPage({ currentUser, onLoginSuccess }) {
   const [username, setUsername] = useState('');
@@ -10,22 +11,19 @@ export default function LoginPage({ currentUser, onLoginSuccess }) {
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
-  // 如果已經登入，直接重定向到首頁，防止重複登入
   if (currentUser) {
     return <Navigate to="/" replace />;
   }
 
   const handleSubmit = async (e) => {
-    e.preventDefault();
+    if (e) e.preventDefault();
     setLoading(true);
 
     try {
-      // 呼叫後端登入 API
       const res = await api.post('/auth/login/', { username, password });
       
       if (res.data && res.data.username) {
         toast.success(`歡迎回來，${res.data.username}！`);
-        // 通知 App.jsx 更新全域狀態
         onLoginSuccess({
           username: res.data.username,
           role: res.data.is_staff ? 'admin' : 'user',
@@ -44,7 +42,7 @@ export default function LoginPage({ currentUser, onLoginSuccess }) {
   return (
     <div className="min-h-[80vh] flex items-center justify-center p-4">
       <div className="w-full max-w-md">
-        {/* Logo 區域 */}
+        
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-16 h-16 bg-indigo-600 text-white rounded-2xl shadow-lg mb-4">
             <Mail size={32} />
@@ -53,50 +51,40 @@ export default function LoginPage({ currentUser, onLoginSuccess }) {
           <p className="text-slate-500 mt-2">請登入以管理您的郵件訂閱</p>
         </div>
 
-        {/* 登入卡片 */}
         <div className="bg-white p-8 rounded-3xl shadow-xl shadow-slate-200/50 border border-slate-100">
-          <form onSubmit={handleSubmit} className="space-y-6">
-            <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-2 flex items-center gap-2">
-                <User size={16} className="text-slate-400" /> 帳號名稱
-              </label>
-              <input
-                required
-                type="text"
-                className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all bg-slate-50 focus:bg-white"
-                placeholder="請輸入帳號"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-2 flex items-center gap-2">
-                <Lock size={16} className="text-slate-400" /> 密碼
-              </label>
-              <input
-                required
-                type="password"
-                className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all bg-slate-50 focus:bg-white"
-                placeholder="••••••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-              />
-            </div>
-
-            <button
-              type="submit"
+          <form onSubmit={handleSubmit} className="flex flex-col gap-6">
+            
+            {/* 修正 onChange，直接接收字串 */}
+            <Input 
+              label="帳號名稱"
+              placeholder="請輸入帳號"
+              value={username}
+              onChange={(val) => setUsername(val)}
               disabled={loading}
-              className="w-full bg-indigo-600 text-white py-3 rounded-xl font-bold hover:bg-indigo-700 active:scale-[0.98] transition-all shadow-lg shadow-indigo-100 flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
-            >
-              {loading ? (
-                <Loader2 className="animate-spin" size={20} />
-              ) : (
-                <>
-                  <LogIn size={20} /> 立即登入
-                </>
-              )}
-            </button>
+            />
+
+            {/* 修正 onChange，直接接收字串 */}
+            <Input 
+              label="密碼"
+              type="password"
+              placeholder="••••••••"
+              value={password}
+              onChange={(val) => setPassword(val)}
+              disabled={loading}
+            />
+
+            <div className="pt-2">
+              <Button 
+                type="brand" 
+                size="lg" 
+                leftIcon={loading ? "mdi:loading" : "mdi:login"} 
+                onClick={handleSubmit}
+                disabled={loading}
+                className="w-full justify-center"
+              >
+                {loading ? "登入中..." : "立即登入"}
+              </Button>
+            </div>
           </form>
 
           <div className="mt-8 pt-6 border-t border-slate-100 text-center">

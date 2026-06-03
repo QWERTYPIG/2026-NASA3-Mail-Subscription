@@ -1,10 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import api from '../api/axios';
 import { toast } from 'react-hot-toast';
-import { ShieldCheck, Plus, Settings, Trash2, Loader2, ArrowRight, Mail } from 'lucide-react';
+import { Loader2, Mail } from 'lucide-react';
+import { 
+  PageHeader, 
+  Button, 
+  RecordCard, 
+  Badge, 
+  Input
+} from '@csie/ui-library';
 
 const AdminAliasPage = () => {
+  const navigate = useNavigate();
   const [aliases, setAliases] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -27,8 +35,8 @@ const AdminAliasPage = () => {
     e.preventDefault();
     try {
       await api.post('/manage/aliases/', {
-        alias_name: newAlias.name,       // Map to Django format
-        display_name: newAlias.name,     // Default display name
+        alias_name: newAlias.name,       
+        display_name: newAlias.name,     
         description: newAlias.description          
       });
       toast.success("別名建立成功");
@@ -45,7 +53,7 @@ const AdminAliasPage = () => {
     try {
       await api.delete(`/manage/aliases/${aliasName}/`);
       toast.success("已成功刪除別名");
-      fetchAliases(); // Refresh the list
+      fetchAliases(); 
     } catch {
       toast.error("刪除失敗");
     }
@@ -54,81 +62,78 @@ const AdminAliasPage = () => {
   if (loading) return <div className="flex justify-center p-20"><Loader2 className="animate-spin text-indigo-600" size={40} /></div>;
 
   return (
-    <div className="max-w-5xl mx-auto">
-      <div className="flex justify-between items-center mb-8">
-        <div>
-          <h1 className="text-2xl font-bold !text-slate-800 flex items-center gap-2">
-            <ShieldCheck className="text-indigo-600" /> 別名系統管理
-          </h1>
-          <p className="text-slate-500">管理郵件群組、查看訂閱成員與別名設定。</p>
+    <div className="w-full bg-[#F8F9FA] min-h-screen">
+      <PageHeader>
+        <PageHeader.TitleArea title="別名系統管理" breadcrumb="首頁 / 別名管理" />
+        <PageHeader.TopRight />
+        <PageHeader.ActionArea>
+          <Button type="brand" size="lg" leftIcon="mdi:plus" onClick={() => setShowModal(true)}>
+            新增別名
+          </Button>
+        </PageHeader.ActionArea>
+      </PageHeader>
+
+      <div className="p-8 max-w-5xl mx-auto">
+        <div className="grid gap-4">
+          {aliases.map(alias => (
+            <RecordCard
+              key={alias.alias_name}
+              header={
+                <div className="flex items-center gap-4">
+                  <div className="bg-indigo-50 p-2.5 rounded-full text-indigo-600">
+                    <Mail size={22} />
+                  </div>
+                  <h3 className="m-0 text-[20px] font-semibold text-black">
+                    {alias.display_name || alias.alias_name}
+                  </h3>
+                </div>
+              }
+              actions={
+                <div className="flex items-center gap-2">
+                  <Button type="brand" size="sm" leftIcon="mdi:cog" onClick={() => navigate(`/manage/aliases/${alias.alias_name}`)}>
+                    管理設定
+                  </Button>
+                  <Button type="danger" size="sm" leftIcon="mdi:trash-can-outline" onClick={() => handleDelete(alias.alias_name, alias.display_name || alias.alias_name)}>
+                    刪除
+                  </Button>
+                </div>
+              }
+            >
+              <div className="mt-2">
+                <Badge type="info" text={alias.description || "暫無描述"} />
+              </div>
+            </RecordCard>
+          ))}
         </div>
-        <button 
-          onClick={() => setShowModal(true)}
-          className="bg-indigo-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-indigo-700 flex items-center gap-2 transition-all shadow-md"
-        >
-          <Plus size={18} /> 新增別名
-        </button>
       </div>
 
-      <div className="grid gap-4">
-        {aliases.map(alias => (
-          <div key={alias.alias_name} className="bg-white border border-slate-200 rounded-xl p-5 flex items-center justify-between hover:shadow-md transition-shadow">
-            <div className="flex items-center gap-4">
-              <div className="bg-indigo-50 p-3 rounded-full text-indigo-600">
-                <Mail size={24} />
-              </div>
-              <div>
-                <h3 className="font-bold text-slate-800 text-lg uppercase tracking-wide">{alias.display_name || alias.alias_name}</h3>
-                <p className="text-slate-500 text-sm">{alias.description || "暫無描述"}</p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <Link 
-                to={`/manage/aliases/${alias.alias_name}`}
-                className="flex items-center gap-2 px-4 py-2 bg-slate-100 text-slate-700 font-semibold rounded-lg hover:bg-indigo-600 hover:text-white transition-all"
-              >
-                <Settings size={16} />
-                <span>管理成員/更改簡述</span>
-                <ArrowRight size={16} />
-              </Link>
-              <button 
-                onClick={() => handleDelete(alias.alias_name, alias.display_name || alias.alias_name)}
-                className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                title="刪除別名"
-              >
-                <Trash2 size={20} />
-              </button>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* 新增別名 Modal */}
       {showModal && (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-[100]">
-          <form onSubmit={handleCreate} className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4 animate-in zoom-in-95 duration-200">
+          <form onSubmit={handleCreate} className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8 space-y-6 animate-in zoom-in-95 duration-200">
             <h2 className="text-xl font-bold text-slate-800">建立新郵件別名</h2>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">別名名稱 (例如: security-alerts)</label>
-              <input 
-                required
-                className="w-full p-2.5 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+            <div className="space-y-4">
+              {/* 修正 onChange */}
+              <Input 
+                label="別名名稱 (例如: security-alerts)"
+                placeholder="輸入別名..."
                 value={newAlias.name}
-                onChange={e => setNewAlias({...newAlias, name: e.target.value})}
+                onChange={(val) => setNewAlias({...newAlias, name: val})}
               />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">描述</label>
-              <textarea 
-                className="w-full p-2.5 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+              {/* 修正 onChange */}
+              <Input 
+                label="描述說明"
+                placeholder="簡單描述此群組用途..."
                 value={newAlias.description}
-                onChange={e => setNewAlias({...newAlias, description: e.target.value})}
+                onChange={(val) => setNewAlias({...newAlias, description: val})}
               />
             </div>
-            <div className="flex gap-3 pt-2">
-              <button type="button" onClick={() => setShowModal(false)} className="flex-1 py-2 border rounded-lg font-bold text-slate-600">取消</button>
-              <button type="submit" className="flex-1 py-2 bg-indigo-600 text-white rounded-lg font-bold hover:bg-indigo-700">確認建立</button>
+            <div className="flex gap-3 pt-4">
+              <div className="flex-1" onClick={() => setShowModal(false)}>
+                <Button type="default" className="w-full justify-center">取消</Button>
+              </div>
+              <div className="flex-1" onClick={handleCreate}>
+                <Button type="brand" className="w-full justify-center">確認建立</Button>
+              </div>
             </div>
           </form>
         </div>
