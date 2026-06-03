@@ -18,7 +18,6 @@ export default function LoginPage({ currentUser, onLoginSuccess }) {
   }
 
   const handleSubmit = async (e) => {
-    // 支援 Form 的 onSubmit 或 Button 的 onClick
     if (e) e.preventDefault();
     setLoading(true);
 
@@ -55,12 +54,11 @@ export default function LoginPage({ currentUser, onLoginSuccess }) {
           <p className="text-slate-500 mt-2">請登入以管理您的郵件訂閱</p>
         </div>
 
-        {/* 登入卡片 (保留原本的乾淨 div 容器，因 SectionCard 不適用此處) */}
         <div className="bg-white p-8 rounded-3xl shadow-xl shadow-slate-200/50 border border-slate-100">
           <form onSubmit={handleSubmit} className="flex flex-col gap-6">
             
-            {/* 替換為團隊開發的 InteractiveInput */}
-            <InteractiveInput 
+            {/* 修正為 Input */}
+            <Input 
               label="帳號名稱"
               placeholder="請輸入帳號"
               value={username}
@@ -68,7 +66,7 @@ export default function LoginPage({ currentUser, onLoginSuccess }) {
               disabled={loading}
             />
 
-            <InteractiveInput 
+            <Input 
               label="密碼"
               type="password"
               placeholder="••••••••"
@@ -78,7 +76,6 @@ export default function LoginPage({ currentUser, onLoginSuccess }) {
             />
 
             <div className="pt-2">
-              {/* 替換為團隊開發的 Button，並套用 Iconify 字串 */}
               <Button 
                 type="brand" 
                 size="lg" 
