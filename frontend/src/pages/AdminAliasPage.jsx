@@ -144,14 +144,14 @@ const AdminAliasPage = () => {
             <h2 className="text-xl font-bold text-slate-800">建立新郵件別名</h2>
             
             <div className="space-y-4">
-              <InteractiveInput 
+              <Input 
                 label="別名名稱 (例如: security-alerts)"
                 placeholder="輸入別名..."
                 value={newAlias.name}
                 onChange={e => setNewAlias({...newAlias, name: e.target.value})}
               />
               
-              <InteractiveInput 
+              <Input 
                 label="描述說明"
                 placeholder="簡單描述此群組用途..."
                 value={newAlias.description}
