@@ -71,7 +71,7 @@ export default function HomePage({ currentUser }) {
     
     try {
       await api.put('/user/subscriptions/', payload);
-      toast.success("已收到訂閱狀態更新請求，將於 10 分鐘內生效");
+      toast.success("已收到訂閱狀態更新請求，將於 30 分鐘內生效");
       setOriginalAliases(JSON.parse(JSON.stringify(aliases)));
       setHasChanges(false);
     } catch (err) {
