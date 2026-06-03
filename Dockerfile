@@ -34,3 +34,14 @@ RUN pip install --upgrade pip setuptools wheel \
 # The code will be mounted via volumes in docker-compose during development,
 # but we copy it here for a production-ready image.
 COPY . /app/
+
+# Run as an unprivileged user (defense-in-depth: a container breakout lands on
+# UID 10001, not root). The worker runs scripts/db_sync.sh, which writes
+# LAST_SYNC_FILE into the bind-mounted LAST_SYNC_DIR — so that host directory
+# MUST be chown'd to this UID on every host BEFORE rolling this out, else the
+# worker fails with Permission denied:
+#     sudo chown -R 10001:10001 /var/lib/mailsub
+RUN groupadd --gid 10001 appuser \
+    && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin appuser \
+    && chown -R appuser:appuser /app
+USER appuser
