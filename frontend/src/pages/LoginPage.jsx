@@ -5,7 +5,7 @@ import { toast } from 'react-hot-toast';
 import { Mail } from 'lucide-react';
 
 // 1. 引入 UI 團隊的元件
-import { InteractiveInput, Button } from '@csie/ui-library';
+import { Input, Button } from '@csie/ui-library';
 
 export default function LoginPage({ currentUser, onLoginSuccess }) {
   const [username, setUsername] = useState('');
