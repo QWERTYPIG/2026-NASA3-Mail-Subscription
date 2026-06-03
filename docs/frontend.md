@@ -27,3 +27,11 @@ Connect to frontend at port `55111`.
     └── vite.config.js         # Vite configuration with proxy settings
 ```
 
+## UI-UX Library Integration
+- install library
+    - create `.npmrc` in `/frontend` and add `@csie:registry=http://172.16.127.113:4873/`
+    - run `sudo npm install @csie/ui-library`
+
+## Misc
+- How to destroy frontend cache and force reinstall
+    - `docker compose up -d --build -V frontend`
