@@ -80,23 +80,24 @@ const AliasDetail = () => {
 
   if (loading) return <div className="flex justify-center p-20"><Loader2 className="animate-spin text-indigo-600" size={40} /></div>;
   return (
-    // 1. Clean outer wrapper
-    <div className="w-full flex flex-col">
-      <PageHeader>
-        <PageHeader.TitleArea title={`別名設定 (${id})`} breadcrumb="首頁 / 別名管理 / 設定" />
-        <PageHeader.TopRight />
-        <PageHeader.ActionArea>
-          <Button type="default" size="lg" leftIcon="mdi:arrow-left" onClick={() => navigate('/manage/aliases')}>
-            返回清單
-          </Button>
-        </PageHeader.ActionArea>
-      </PageHeader>
+    // 1. The outer wrapper uses flex to center everything horizontally
+    <div className="w-full flex flex-col items-center pb-12">
+      
+      {/* 2. The single, unified column (using 6xl to give the grid room to breathe). Both Header and Content share this! */}
+      <div className="w-full max-w-6xl flex flex-col gap-6">
         
-      {/* 2. Forced Centering Wrapper */}
-      <div className="w-full flex justify-center py-8 px-4">
+        <PageHeader>
+          <PageHeader.TitleArea title={`別名設定 (${id})`} breadcrumb="首頁 / 別名管理 / 設定" />
+          <PageHeader.TopRight />
+          <PageHeader.ActionArea>
+            <Button type="default" size="lg" leftIcon="mdi:arrow-left" onClick={() => navigate('/manage/aliases')}>
+              返回清單
+            </Button>
+          </PageHeader.ActionArea>
+        </PageHeader>
         
-        {/* 3. The constrained, centered grid (max-w-6xl instead of 4xl since it has 3 columns) */}
-        <div className="w-full max-w-6xl grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8">
+        {/* 3. The main grid content (now sits perfectly aligned under the header) */}
+        <div className="w-full grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8">
           
           {/* 左側：基本設定表單 */}
           <div className="md:col-span-1">
