@@ -62,7 +62,7 @@ const AdminAliasPage = () => {
   if (loading) return <div className="flex justify-center p-20"><Loader2 className="animate-spin text-indigo-600" size={40} /></div>;
 
   return (
-    <div className="w-full bg-[#F8F9FA] min-h-screen">
+    <div className="w-full bg-[#F8F9FA] min-h-screen max-w-5xl mx-auto">
       <PageHeader>
         <PageHeader.TitleArea title="別名系統管理" breadcrumb="首頁 / 別名管理" />
         <PageHeader.TopRight />
@@ -73,7 +73,7 @@ const AdminAliasPage = () => {
         </PageHeader.ActionArea>
       </PageHeader>
 
-      <div className="p-4 md:p-8 w-full max-w-5xl mx-auto">
+      <div className="p-4 md:p-8 w-full">
         <div className="grid gap-4">
           {aliases.map(alias => (
             <RecordCard

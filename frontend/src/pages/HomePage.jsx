@@ -95,7 +95,7 @@ export default function HomePage({ currentUser }) {
   }
 
   return (
-    <div className="w-full bg-[#F8F9FA] min-h-screen">
+    <div className="w-full bg-[#F8F9FA] min-h-screen max-w-5xl mx-auto">
       
       {/* 2. 插槽式 PageHeader */}
       <PageHeader>
@@ -122,7 +122,7 @@ export default function HomePage({ currentUser }) {
       </PageHeader>
 
       {/* 3. 主要內容區 */}
-      <div className="p-4 md:p-8 w-full max-w-5xl mx-auto flex flex-col gap-4 md:gap-6">
+      <div className="p-4 md:p-8 w-full flex flex-col gap-4 md:gap-6">
         
         {/* 提示說明 */}
         {isNormalUser && (
