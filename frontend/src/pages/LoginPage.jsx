@@ -61,7 +61,7 @@ export default function LoginPage({ currentUser, onLoginSuccess }) {
               value={username}
               onChange={(val) => setUsername(val)}
               disabled={loading}
-              className="w-full"
+              className="w-full justify-center"
             />
 
             {/* 修正 onChange，直接接收字串 */}
@@ -72,7 +72,7 @@ export default function LoginPage({ currentUser, onLoginSuccess }) {
               value={password}
               onChange={(val) => setPassword(val)}
               disabled={loading}
-              className="w-full"
+              className="w-full justify-center"
             />
 
             <div className="pt-2">
