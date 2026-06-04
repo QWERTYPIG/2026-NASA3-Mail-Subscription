@@ -835,6 +835,7 @@ class Monitor:
         ) as handle:
             handle.write(new_content)
             temp_name = handle.name
+        os.chmod(temp_name, 0o644)
         os.replace(temp_name, self.config.env_role)
         return True
 
