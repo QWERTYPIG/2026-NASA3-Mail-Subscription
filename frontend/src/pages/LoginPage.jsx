@@ -51,7 +51,7 @@ export default function LoginPage({ currentUser, onLoginSuccess }) {
           <p className="text-slate-500 mt-2">請登入以管理您的郵件訂閱</p>
         </div>
 
-        <div className="bg-white p-8 rounded-3xl shadow-xl shadow-slate-200/50 border border-slate-100">
+        <div className="bg-white p-6 sm:p-8 rounded-2xl sm:rounded-3xl shadow-xl shadow-slate-200/50 border border-slate-100 w-full max-w-[90vw] sm:max-w-md">
           <form onSubmit={handleSubmit} className="flex flex-col gap-6">
             
             {/* 修正 onChange，直接接收字串 */}

@@ -127,7 +127,7 @@ export default function App() {
         </Navbar>
 
         {/* 主要內容區 */}
-        <main className="flex-grow container mx-auto px-8 py-10">
+        <main className="flex-grow container mx-auto px-4 md:px-8 py-6 md:py-10 w-full overflow-x-hidden">
           <Routes>
             {navConfig.map((item) => {
               const Element = componentMap[item.path];

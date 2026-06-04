@@ -73,7 +73,7 @@ const AdminAliasPage = () => {
         </PageHeader.ActionArea>
       </PageHeader>
 
-      <div className="p-8 max-w-5xl mx-auto">
+      <div className="p-4 md:p-8 w-full max-w-5xl mx-auto">
         <div className="grid gap-4">
           {aliases.map(alias => (
             <RecordCard
@@ -109,7 +109,7 @@ const AdminAliasPage = () => {
 
       {showModal && (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-[100]">
-          <form onSubmit={handleCreate} className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8 space-y-6 animate-in zoom-in-95 duration-200">
+          <form onSubmit={handleCreate} className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 sm:p-8 m-4 space-y-6 animate-in zoom-in-95 duration-200">
             <h2 className="text-xl font-bold text-slate-800">建立新郵件別名</h2>
             <div className="space-y-4">
               {/* 修正 onChange */}

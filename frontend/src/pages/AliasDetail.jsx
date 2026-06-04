@@ -91,8 +91,8 @@ const AliasDetail = () => {
           </Button>
         </PageHeader.ActionArea>
       </PageHeader>
-
-      <div className="p-8 max-w-6xl mx-auto grid md:grid-cols-3 gap-8">
+        
+      <div className="p-4 md:p-8 w-full max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8">
         <div className="md:col-span-1">
           <section className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm sticky top-24 space-y-6">
             <h2 className="text-lg font-bold text-slate-800">基本資訊</h2>
@@ -120,7 +120,7 @@ const AliasDetail = () => {
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="p-6 bg-slate-50 border-b border-slate-200">
               <h2 className="text-lg font-bold text-slate-800 mb-4">成員管理</h2>
-              <form onSubmit={handleAddMember} className="flex gap-4 items-end">
+              <form onSubmit={handleAddMember} className="flex flex-col sm:flex-row gap-4 sm:items-end">
                 <div className="flex-1">
                   {/* 修正 onChange */}
                   <Input 
