@@ -131,7 +131,7 @@ export default function HomePage({ currentUser }) {
         {aliases.length === 0 ? (
           <HelpText size="L" status="warning">目前沒有可用的郵件別名</HelpText>
         ) : (
-          <div className="flex flex-col gap-4 w-full">
+          <div className="w-full flex flex-col gap-4 items-stretch [&>*]:w-full">
             {aliases.map((alias) => {
               const originalAlias = originalAliases.find(a => a.alias_name === alias.alias_name);
               const isModified = originalAlias && originalAlias.is_subscribed !== alias.is_subscribed;

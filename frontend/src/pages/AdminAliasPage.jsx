@@ -76,7 +76,7 @@ const AdminAliasPage = () => {
           </PageHeader.ActionArea>
         </PageHeader>
 
-        <div className="flex flex-col gap-4 w-full">
+        <div className="w-full flex flex-col gap-4 items-stretch [&>*]:w-full">
           {aliases.map(alias => (
             <RecordCard
               key={alias.alias_name}
