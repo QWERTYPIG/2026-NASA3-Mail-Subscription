@@ -94,12 +94,13 @@ export default function HomePage({ currentUser }) {
     );
   }
   return (
-    // 1. The outer wrapper uses flex to center everything horizontally
-    <div className="w-full flex flex-col items-center pb-12">
+    // 1. The outer flex container centers everything
+    <div className="w-full flex justify-center pb-12">
       
-      {/* 2. The single, unified column. Both Header and Cards share this EXACT width! */}
-      <div className="w-full max-w-4xl flex flex-col gap-6">
+      {/* 2. Increased to max-w-5xl so the PageHeader doesn't overflow */}
+      <div className="w-full max-w-5xl flex flex-col gap-6">
         
+        {/* PageHeader is now strictly bound by the 5xl container */}
         <PageHeader>
           <PageHeader.TitleArea 
             title={isNormalUser ? "郵件別名訂閱管理" : "郵件別名總覽"} 
@@ -130,8 +131,7 @@ export default function HomePage({ currentUser }) {
         {aliases.length === 0 ? (
           <HelpText size="L" status="warning">目前沒有可用的郵件別名</HelpText>
         ) : (
-          <div className="grid gap-4 w-full">
-            {/* ... Your alias.map() code remains exactly the same ... */}
+          <div className="flex flex-col gap-4 w-full">
             {aliases.map((alias) => {
               const originalAlias = originalAliases.find(a => a.alias_name === alias.alias_name);
               const isModified = originalAlias && originalAlias.is_subscribed !== alias.is_subscribed;

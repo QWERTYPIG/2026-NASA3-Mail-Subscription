@@ -61,10 +61,10 @@ const AdminAliasPage = () => {
 
   if (loading) return <div className="flex justify-center p-20"><Loader2 className="animate-spin text-indigo-600" size={40} /></div>;
   return (
-    <div className="w-full flex flex-col items-center pb-12">
+    <div className="w-full flex justify-center pb-12">
       
-      {/* Both Header and Cards share this max-w-4xl box */}
-      <div className="w-full max-w-4xl flex flex-col gap-6">
+      {/* Both Header and Cards share this exact max-w-5xl box */}
+      <div className="w-full max-w-5xl flex flex-col gap-6">
         
         <PageHeader>
           <PageHeader.TitleArea title="別名系統管理" breadcrumb="首頁 / 別名管理" />
@@ -76,7 +76,7 @@ const AdminAliasPage = () => {
           </PageHeader.ActionArea>
         </PageHeader>
 
-        <div className="grid gap-4 w-full">
+        <div className="flex flex-col gap-4 w-full">
           {aliases.map(alias => (
             <RecordCard
               key={alias.alias_name}
@@ -111,11 +111,11 @@ const AdminAliasPage = () => {
 
       {showModal && (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-[100]">
-           {/* ... Modal code remains unchanged ... */}
+           {/* ... Modal form code remains exactly the same ... */}
         </div>
       )}
     </div>
-  );    
+  );
 }
 
 export default AdminAliasPage;
