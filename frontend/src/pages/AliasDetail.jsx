@@ -80,29 +80,50 @@ const AliasDetail = () => {
 
   if (loading) return <div className="flex justify-center p-20"><Loader2 className="animate-spin text-indigo-600" size={40} /></div>;
   return (
-    // 1. The outer wrapper uses flex to center everything horizontally
-    <div className="w-full flex justify-center bg-gray-100">
-    <div className="w-full flex flex-col items-center pb-12">
-      
-      {/* 2. The single, unified column (using 6xl to give the grid room to breathe). Both Header and Content share this! */}
-      <div className="w-full max-w-6xl flex flex-col gap-6">
+    // 1. The outer screen container
+    <div className="w-full min-h-screen bg-gray-100 py-8 px-4 flex flex-col gap-6">
+
+      {/* 2. HEADER TIER: Unified White Card Container (using max-w-6xl to match the grid below) */}
+      <div className="w-full max-w-6xl mx-auto min-h-[100px] flex flex-row items-center justify-between bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
         
-        <PageHeader>
-          <PageHeader.TitleArea title={`別名設定 (${id})`} breadcrumb="首頁 / 別名管理 / 設定" />
-          <PageHeader.TopRight />
-          <PageHeader.ActionArea>
-            <Button type="default" size="lg" leftIcon="mdi:arrow-left" onClick={() => navigate('/manage/aliases')}>
-              返回清單
-            </Button>
-          </PageHeader.ActionArea>
-        </PageHeader>
+        {/* Left Side: The TitleArea with enlarged text */}
+        <div className="flex-1 flex flex-col justify-center h-full">
+          <PageHeader className="!m-0 !p-0 !bg-transparent !border-none !shadow-none">
+            <PageHeader.TitleArea 
+              title={
+                <span className="text-3xl sm:text-4xl font-extrabold tracking-tight block leading-tight">
+                  別名設定 ({id})
+                </span>
+              } 
+              breadcrumb={
+                <span className="text-base sm:text-lg text-slate-500 mt-2 block">
+                  首頁 / 別名管理 / 設定
+                </span>
+              } 
+            />
+          </PageHeader>
+        </div>
+
+        {/* Right Side: The Return Button */}
+        <div className="flex-shrink-0 ml-4 flex items-center h-full">
+          <Button type="default" size="lg" leftIcon="mdi:arrow-left" onClick={() => navigate('/manage/aliases')}>
+            返回清單
+          </Button>
+        </div>
+      </div>
+
+      {/* 3. CONTENT TIER: The Main Grid */}
+      <div className="w-full max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8">
         
-        {/* 3. The main grid content (now sits perfectly aligned under the header) */}
-        <div className="w-full grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8">
-          
-          {/* 左側：基本設定表單 */}
-          <div className="md:col-span-1">
-            <section className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm sticky top-24 space-y-6">
+        {/* ========================================== */}
+        {/* LEFT COLUMN (col-span-1): Forms & Inputs     */}
+        {/* ========================================== */}
+        <div className="md:col-span-1">
+          {/* Wrapped in a sticky container so both boxes float nicely as you scroll down the member list */}
+          <div className="sticky top-8 flex flex-col gap-6">
+            
+            {/* Box 1: 基本設定表單 (Basic Info) */}
+            <section className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-6">
               <h2 className="text-lg font-bold text-slate-800">基本資訊</h2>
               <form onSubmit={handleUpdateAlias} className="space-y-6">
                 <Input 
@@ -120,66 +141,77 @@ const AliasDetail = () => {
                 </Button>
               </form>
             </section>
-          </div>
 
-          {/* 右側：成員管理清單 */}
-          <div className="md:col-span-2 space-y-6">
-            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-              <div className="p-6 bg-slate-50 border-b border-slate-200">
-                <h2 className="text-lg font-bold text-slate-800 mb-4">成員管理</h2>
-                <form onSubmit={handleAddMember} className="flex flex-col sm:flex-row gap-4 sm:items-end">
-                  <div className="flex-1">
-                    <Input 
-                      label="新增成員"
-                      placeholder="輸入學生/員工 UID (例如: b13902001)"
-                      value={newUid}
-                      onChange={(val) => setNewUid(val)}
-                    />
-                  </div>
-                  <Button type="brand" leftIcon="mdi:account-plus" onClick={handleAddMember}>加入</Button>
-                </form>
-              </div>
-
-              <div className="p-4">
-                {allMembers.length === 0 ? (
-                  <div className="p-8 text-center">
-                    <HelpText size="L" status="default">目前無訂閱成員</HelpText>
-                  </div>
-                ) : (
-                  <TableList
-                    data={allMembers}
-                    columns={[
-                      {
-                        header: '成員 UID',
-                        accessor: (d) => (
-                          <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center font-bold text-sm text-slate-500">
-                              {d.uid.charAt(0).toUpperCase()}
-                            </div>
-                            <span className="font-mono font-bold text-slate-700">{d.uid}</span>
-                          </div>
-                        )
-                      },
-                      {
-                        header: '操作',
-                        accessor: (d) => (
-                          <Button type="danger" size="sm" leftIcon="mdi:trash-can-outline" onClick={() => handleRemoveMember(d.uid)}>
-                            移除
-                          </Button>
-                        )
-                      }
-                    ]}
-                  />
-                )}
-              </div>
-            </div>
-            <HelpText size="L" status="warning">
-              管理員注意：強制新增或移除成員將立即生效。該動作會同步更新至資料庫並排入 LDAP 同步佇列。
-            </HelpText>
+            {/* Box 2: 新增成員 (Add Member - MOVED HERE) */}
+            <section className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-6">
+              <h2 className="text-lg font-bold text-slate-800">新增成員</h2>
+              <form onSubmit={handleAddMember} className="space-y-4">
+                <Input 
+                  label="成員 UID"
+                  placeholder="輸入學生/員工 UID (例如: b13902001)"
+                  value={newUid}
+                  onChange={(val) => setNewUid(val)}
+                  className="w-full"
+                />
+                <Button type="brand" className="w-full justify-center" leftIcon="mdi:account-plus" onClick={handleAddMember}>
+                  加入
+                </Button>
+              </form>
+            </section>
+            
           </div>
         </div>
+
+        {/* ========================================== */}
+        {/* RIGHT COLUMN (col-span-2): Member List       */}
+        {/* ========================================== */}
+        <div className="md:col-span-2 space-y-6">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            
+            {/* Cleaner header since the input was moved out */}
+            <div className="p-6 bg-slate-50 border-b border-slate-200">
+              <h2 className="text-lg font-bold text-slate-800">成員管理清單</h2>
+            </div>
+
+            <div className="p-4">
+              {allMembers.length === 0 ? (
+                <div className="p-8 text-center">
+                  <HelpText size="L" status="default">目前無訂閱成員</HelpText>
+                </div>
+              ) : (
+                <TableList
+                  data={allMembers}
+                  columns={[
+                    {
+                      header: '成員 UID',
+                      accessor: (d) => (
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center font-bold text-sm text-slate-500">
+                            {d.uid.charAt(0).toUpperCase()}
+                          </div>
+                          <span className="font-mono font-bold text-slate-700">{d.uid}</span>
+                        </div>
+                      )
+                    },
+                    {
+                      header: '操作',
+                      accessor: (d) => (
+                        <Button type="danger" size="sm" leftIcon="mdi:trash-can-outline" onClick={() => handleRemoveMember(d.uid)}>
+                          移除
+                        </Button>
+                      )
+                    }
+                  ]}
+                />
+              )}
+            </div>
+          </div>
+          <HelpText size="L" status="warning">
+            管理員注意：強制新增或移除成員將立即生效。該動作會同步更新至資料庫並排入 LDAP 同步佇列。
+          </HelpText>
+        </div>
+
       </div>
-    </div>
     </div>
   );
 }
