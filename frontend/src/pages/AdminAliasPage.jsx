@@ -96,7 +96,7 @@ const AdminAliasPage = () => {
       {/* 3. CONTENT TIER: Narrower (max-w-4xl) to create visual hierarchy */}
       <div className="w-full max-w-4xl flex flex-col gap-6 p-6 sm:p-8 bg-gray-50 rounded-2xl shadow-sm">
         
-        <div className="w-full flex flex-col gap-4 items-stretch [&>*]:w-full">
+        <div className="w-full flex flex-col gap-4 items-stretch [&>*]:w-full [&>*]:!max-w-none">
           {aliases.map(alias => (
             <RecordCard
               key={alias.alias_name}
