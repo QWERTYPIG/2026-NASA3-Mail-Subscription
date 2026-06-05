@@ -81,6 +81,7 @@ const AliasDetail = () => {
   if (loading) return <div className="flex justify-center p-20"><Loader2 className="animate-spin text-indigo-600" size={40} /></div>;
   return (
     // 1. The outer wrapper uses flex to center everything horizontally
+    <div className="w-full flex justify-center bg-gray-100">
     <div className="w-full flex flex-col items-center pb-12">
       
       {/* 2. The single, unified column (using 6xl to give the grid room to breathe). Both Header and Content share this! */}
@@ -178,6 +179,7 @@ const AliasDetail = () => {
           </div>
         </div>
       </div>
+    </div>
     </div>
   );
 }
