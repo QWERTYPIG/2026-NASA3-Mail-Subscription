@@ -94,35 +94,52 @@ export default function HomePage({ currentUser }) {
     );
   }
   return (
-    // 1. The outer flex container centers everything
-    <div className="w-full flex justify-center bg-gray-100">
-    <div className="flex flex-col gap-[2rem] p-[1rem] max-w-4xl bg-gray-50 rounded-[1rem] justify-center">
-      
-      {/* 2. Increased to max-w-4xl so the PageHeader doesn't overflow */}
-      <div className="w-full max-w-4xl flex flex-col gap-6">
-        
-        {/* PageHeader is now strictly bound by the 4xl container */}
-        <PageHeader>
-          <PageHeader.TitleArea 
-            title={isNormalUser ? "郵件別名訂閱管理" : "郵件別名總覽"} 
-            breadcrumb="首頁 / 郵件別名" 
-          />
-          <PageHeader.TopRight />
-          <PageHeader.ActionArea>
-            {isNormalUser && (
-              <Button 
-                type="brand" 
-                size="lg" 
-                leftIcon={isSaving ? "mdi:loading" : "mdi:content-save"} 
-                onClick={handleSave}
-                disabled={!hasChanges || isSaving}
-              >
-                {isSaving ? '儲存中...' : '儲存變更'}
-              </Button>
-            )}
-          </PageHeader.ActionArea>
-        </PageHeader>
+    // 1. The full-screen canvas. flex-col is CRITICAL here so items stack top-to-bottom!
+    <div className="w-full min-h-screen flex flex-col items-center bg-gray-100 py-8 px-4 gap-6">
 
+    {/* 2. HEADER TIER: Wider (max-w-5xl) to give the button room */}
+      {/* We use a custom flex row here to forcefully align the Title and Button */}
+      <div className="w-full max-w-5xl flex flex-row items-center justify-between bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+        
+        {/* Left Side: Just the TitleArea */}
+        <div className="flex-1">
+          {/* We strip out the internal ActionArea and TopRight since we are handling layout ourselves */}
+          <PageHeader className="!m-0 !p-0 !bg-transparent !border-none !shadow-none">
+            <PageHeader.TitleArea
+              title={
+                // Wrap the title in a span to force it to be larger (text-3xl or text-4xl)
+                <span className="text-3xl sm:text-4xl font-extrabold tracking-tight">
+                  {isNormalUser ? "郵件別名訂閱管理" : "郵件別名總覽"}
+                </span>
+              } 
+              breadcrumb={
+                // Wrap the breadcrumb to increase its size slightly and add spacing
+                <span className="text-base sm:text-lg text-slate-500 mt-2 inline-block">
+                  首頁 / 郵件別名
+                </span>
+              }
+            />
+          </PageHeader>
+        </div>
+
+        {/* Right Side: The Button (extracted out of the UI library's constraints) */}
+        <div className="flex-shrink-0 ml-4">
+          {isNormalUser && (
+            <Button 
+              type="brand" 
+              size="lg" 
+              leftIcon={isSaving ? "mdi:loading" : "mdi:content-save"} 
+              onClick={handleSave}
+              disabled={!hasChanges || isSaving}
+            >
+              {isSaving ? '儲存中...' : '儲存變更'}
+            </Button>
+          )}
+        </div>
+      </div>
+      {/* 3. CONTENT TIER: Narrower (max-w-4xl) to create visual hierarchy */}
+      <div className="w-full max-w-4xl flex flex-col gap-6 p-6 sm:p-8 bg-gray-50 rounded-2xl shadow-sm">
+        
         {isNormalUser && (
           <HelpText size="L" status="info">
             提示：變更送出後將進入 10 分鐘冷卻期。如果停止接收某個別名的郵件，請確認您在此處已取消勾選。
@@ -171,7 +188,6 @@ export default function HomePage({ currentUser }) {
           </div>
         )}
       </div>
-    </div>
     </div>
   );
 }
