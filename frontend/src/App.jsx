@@ -26,6 +26,13 @@ export default function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    setCurrentUser({
+      username: 'layout_tester',
+      is_admin: true,
+      role: 'admin'
+    });
+    setLoading(false);
+    /* comment out for local test
     const checkAuth = async () => {
       try {
         const res = await api.get('/auth/me/');
@@ -43,6 +50,7 @@ export default function App() {
       }
     };
     checkAuth();
+    */
   }, []);
 
   const handleLogout = async () => {
@@ -85,8 +93,8 @@ export default function App() {
           {navConfig
             .filter((item) => item.adminOnly ? currentUser?.role === 'admin' : true)
             .map((item) => (
-              <NavItem key={item.path} name={item.path}>
-                <Link to={item.path} className="flex items-center gap-2 w-full h-full">
+              <NavItem key={item.path} name={item.path} className="relative">
+                <Link to={item.path} className="flex items-center gap-2 w-full h-full before:absolute before:inset-0">
                   <item.icon size={18} />
                   <span>{item.label}</span>
                 </Link>
@@ -117,8 +125,8 @@ export default function App() {
               </NavDropdownItem>
             </NavDropdown>
           ) : (
-            <NavItem name="login">
-              <Link to="/login" className="flex items-center gap-2 w-full h-full text-blue-600 font-bold">
+            <NavItem name="login" className="relative">
+              <Link to="/login" className="flex items-center gap-2 w-full h-full text-blue-600 font-bold before:absolute before:inset-0">
                 <LogIn size={16} />
                 <span>登入系統</span>
               </Link>
