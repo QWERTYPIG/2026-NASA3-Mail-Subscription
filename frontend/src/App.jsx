@@ -26,13 +26,12 @@ export default function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    setCurrentUser({
+    /*setCurrentUser({
       username: 'layout_tester',
       is_admin: true,
       role: 'admin'
     });
-    setLoading(false);
-    /* comment out for local test
+    setLoading(false);*/
     const checkAuth = async () => {
       try {
         const res = await api.get('/auth/me/');
@@ -50,7 +49,6 @@ export default function App() {
       }
     };
     checkAuth();
-    */
   }, []);
 
   const handleLogout = async () => {
