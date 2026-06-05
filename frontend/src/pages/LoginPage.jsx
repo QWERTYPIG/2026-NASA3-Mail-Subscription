@@ -52,30 +52,32 @@ export default function LoginPage({ currentUser, onLoginSuccess }) {
         </div>
 
         <div className="bg-white p-6 sm:p-8 rounded-2xl sm:rounded-3xl shadow-xl shadow-slate-200/50 border border-slate-100 w-full max-w-[90vw] sm:max-w-md">
-          <form onSubmit={handleSubmit} className="flex flex-col gap-6">
+          <form onSubmit={handleSubmit} className="flex flex-col gap-[2rem] p-[1rem] max-w-[25rem] bg-gray-50 rounded-[1rem]">
             
             {/* 修正 onChange，直接接收字串 */}
-            <Input 
-              label="帳號名稱"
-              placeholder="請輸入帳號"
-              value={username}
-              onChange={(val) => setUsername(val)}
-              disabled={loading}
-              className="w-full justify-center"
-            />
+            <div className="flex flex-col gap-[0.5rem]">
+                <Input 
+                    label="帳號名稱"
+                    placeholder="請輸入帳號"
+                    value={username}
+                    onChange={(val) => setUsername(val)}
+                    disabled={loading}
+                    className="w-full"
+                />
+            </div>
 
             {/* 修正 onChange，直接接收字串 */}
             <Input 
-              label="密碼"
-              type="password"
-              placeholder="••••••••"
-              value={password}
-              onChange={(val) => setPassword(val)}
-              disabled={loading}
-              className="w-full justify-center"
+                label="密碼"
+                type="password"
+                placeholder="••••••••"
+                value={password}
+                onChange={(val) => setPassword(val)}
+                disabled={loading}
+                className="w-full"
             />
 
-            <div className="pt-2">
+            <div className="w-full pt-2">
               <Button 
                 type="brand" 
                 size="lg" 
@@ -91,7 +93,7 @@ export default function LoginPage({ currentUser, onLoginSuccess }) {
 
           <div className="mt-8 pt-6 border-t border-slate-100 text-center">
             <p className="text-sm text-slate-400">
-              身為管理員？請向系統管理員索取初始帳號。
+              管理員請先向系統管理員索取初始帳號。
             </p>
           </div>
         </div>
