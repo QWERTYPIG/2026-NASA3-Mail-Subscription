@@ -95,12 +95,12 @@ export default function HomePage({ currentUser }) {
   }
   return (
     // 1. The outer flex container centers everything
-    <div className="w-full flex justify-center pb-12">
+    <div className="w-full flex justify-center pb-12 min-h-screen bg-[#F8F9FA]">
       
-      {/* 2. Increased to max-w-5xl so the PageHeader doesn't overflow */}
-      <div className="w-full max-w-5xl flex flex-col gap-6">
+      {/* 2. Increased to max-w-4xl so the PageHeader doesn't overflow */}
+      <div className="w-full max-w-4xl flex flex-col gap-6">
         
-        {/* PageHeader is now strictly bound by the 5xl container */}
+        {/* PageHeader is now strictly bound by the 4xl container */}
         <PageHeader>
           <PageHeader.TitleArea 
             title={isNormalUser ? "郵件別名訂閱管理" : "郵件別名總覽"} 

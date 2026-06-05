@@ -26,6 +26,13 @@ export default function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    setCurrentUser({
+      username: 'layout_tester',
+      is_admin: true,
+      role: 'admin'
+    });
+    setLoading(false);
+    /* comment out for local test
     const checkAuth = async () => {
       try {
         const res = await api.get('/auth/me/');
@@ -43,6 +50,7 @@ export default function App() {
       }
     };
     checkAuth();
+    */
   }, []);
 
   const handleLogout = async () => {
@@ -74,7 +82,7 @@ export default function App() {
     <BrowserRouter>
       <Toaster position="top-center" />
 
-      <div className="min-h-screen bg-gray-50 flex flex-col">
+      <div className="min-h-screen bg-gray-100 flex flex-col">
         
         {/* 替換為團隊開發的 Navbar */}
         <Navbar 

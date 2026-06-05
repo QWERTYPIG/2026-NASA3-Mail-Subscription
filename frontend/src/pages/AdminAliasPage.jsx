@@ -63,8 +63,8 @@ const AdminAliasPage = () => {
   return (
     <div className="w-full flex justify-center pb-12">
       
-      {/* Both Header and Cards share this exact max-w-5xl box */}
-      <div className="w-full max-w-5xl flex flex-col gap-6">
+      {/* Both Header and Cards share this exact max-w-4xl box */}
+      <div className="w-full max-w-4xl flex flex-col gap-6">
         
         <PageHeader>
           <PageHeader.TitleArea title="別名系統管理" breadcrumb="首頁 / 別名管理" />
