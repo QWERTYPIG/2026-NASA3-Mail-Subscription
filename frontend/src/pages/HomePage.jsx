@@ -95,7 +95,8 @@ export default function HomePage({ currentUser }) {
   }
   return (
     // 1. The outer flex container centers everything
-    <div className="w-full flex justify-center pb-12 min-h-screen bg-[#F8F9FA]">
+    <div className="w-full flex justify-center bg-gray-100">
+    <div className="flex flex-col gap-[2rem] p-[1rem] max-w-4xl bg-gray-50 rounded-[1rem] justify-center">
       
       {/* 2. Increased to max-w-4xl so the PageHeader doesn't overflow */}
       <div className="w-full max-w-4xl flex flex-col gap-6">
@@ -170,6 +171,7 @@ export default function HomePage({ currentUser }) {
           </div>
         )}
       </div>
+    </div>
     </div>
   );
 }

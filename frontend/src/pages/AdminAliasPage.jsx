@@ -61,7 +61,8 @@ const AdminAliasPage = () => {
 
   if (loading) return <div className="flex justify-center p-20"><Loader2 className="animate-spin text-indigo-600" size={40} /></div>;
   return (
-    <div className="w-full flex justify-center pb-12">
+    <div className="w-full flex justify-center bg-gray-100">
+    <div className="flex flex-col gap-[2rem] p-[1rem] max-w-4xl bg-gray-50 rounded-[1rem] justify-center">
       
       {/* Both Header and Cards share this exact max-w-4xl box */}
       <div className="w-full max-w-4xl flex flex-col gap-6">
@@ -108,10 +109,35 @@ const AdminAliasPage = () => {
           ))}
         </div>
       </div>
-
+    </div>
       {showModal && (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-[100]">
-           {/* ... Modal form code remains exactly the same ... */}
+           {/* Modal form code */}
+           <form onSubmit={handleCreate} className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 sm:p-8 m-4 space-y-6 animate-in zoom-in-95 duration-200">
+            <h2 className="text-xl font-bold text-slate-800">建立新郵件別名</h2>
+            <div className="space-y-4">
+              <Input 
+                label="別名名稱 (例如: security-alerts)"
+                placeholder="輸入別名..."
+                value={newAlias.name}
+                onChange={(val) => setNewAlias({...newAlias, name: val})}
+              />
+              <Input 
+                label="描述說明"
+                placeholder="簡單描述此群組用途..."
+                value={newAlias.description}
+                onChange={(val) => setNewAlias({...newAlias, description: val})}
+              />
+            </div>
+            <div className="flex gap-3 pt-4">
+              <div className="flex-1" onClick={() => setShowModal(false)}>
+                <Button type="default" className="w-full justify-center">取消</Button>
+              </div>
+              <div className="flex-1" onClick={handleCreate}>
+                <Button type="brand" className="w-full justify-center">確認建立</Button>
+              </div>
+            </div>
+          </form>
         </div>
       )}
     </div>
