@@ -102,7 +102,7 @@ const AdminAliasPage = () => {
               key={alias.alias_name}
               header={
                 <div className="flex items-center gap-4">
-                  <div className="bg-indigo-50 p-2.5 rounded-full text-indigo-600">
+                  <div className="bg-slate-300 p-2.5 rounded-full text-indigo-600">
                     <Mail size={22} />
                   </div>
                   <h3 className="m-0 text-[20px] font-semibold text-black">
