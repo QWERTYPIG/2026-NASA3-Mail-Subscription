@@ -99,12 +99,12 @@ export default function HomePage({ currentUser }) {
 
     {/* 2. HEADER TIER: Wider (max-w-5xl) to give the button room */}
       {/* We use a custom flex row here to forcefully align the Title and Button */}
-      <div className="w-full max-w-5xl flex flex-row items-center justify-between bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+      <div className="w-full max-w-5xl flex flex-row items-center justify-between bg-white p-6 rounded-2xl shadow-sm">
         
         {/* Left Side: Just the TitleArea */}
-        <div className="flex-1">
+        <div className="flex-1 [&>*]:!border-none [&_*]:!shadow-none [&_hr]:hidden">
           {/* We strip out the internal ActionArea and TopRight since we are handling layout ourselves */}
-          <PageHeader className="!m-0 !p-0 !bg-transparent !border-none !shadow-none">
+          <PageHeader>
             <PageHeader.TitleArea
               title={
                 // Wrap the title in a span to force it to be larger (text-3xl or text-4xl)

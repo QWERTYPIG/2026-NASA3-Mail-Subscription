@@ -68,8 +68,8 @@ const AdminAliasPage = () => {
       <div className="w-full max-w-5xl flex flex-row items-center justify-between bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
         
         {/* Left Side: The TitleArea with enlarged text */}
-        <div className="flex-1">
-          <PageHeader className="!m-0 !p-0 !bg-transparent !border-none !shadow-none">
+        <div className="flex-1 [&>*]:!border-none [&_*]:!shadow-none [&_hr]:hidden">
+          <PageHeader>
             <PageHeader.TitleArea 
               title={
                 <span className="text-3xl sm:text-4xl font-extrabold tracking-tight">
