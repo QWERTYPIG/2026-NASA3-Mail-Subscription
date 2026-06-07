@@ -58,6 +58,7 @@ export default function LoginPage({ currentUser, onLoginSuccess }) {
             <div className="flex flex-col gap-[0.5rem]">
                 <Input 
                     label="帳號名稱"
+                    type="text"
                     placeholder="請輸入帳號"
                     value={username}
                     onChange={(val) => setUsername(val)}
@@ -93,7 +94,7 @@ export default function LoginPage({ currentUser, onLoginSuccess }) {
 
           <div className="mt-8 pt-6 border-t border-slate-100 text-center">
             <p className="text-sm text-slate-400">
-              管理員請先向系統管理員索取初始帳號。
+              管理員請向系統管理員索取初始帳號。
             </p>
           </div>
         </div>
