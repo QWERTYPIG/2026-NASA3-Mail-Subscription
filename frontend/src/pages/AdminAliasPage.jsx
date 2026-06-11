@@ -121,14 +121,11 @@ const AdminAliasPage = () => {
                 </div>
               }
             >
-              <div className="mt-2">
+              <div className="mt-2 [&_*]:!whitespace-normal [&_*]:break-words [&_*]:text-left w-full">
                 <Badge type="info" text={alias.description || "暫無描述"} className="!whitespace-normal break-words text-left"/>
               </div>
             </RecordCard>
           ))}
-              <div className="mt-2 [&_*]:!whitespace-normal [&_*]:break-words [&_*]:text-left w-full">
-                <Badge type="info" text={alias.description || "暫無描述"} className="!whitespace-normal break-words text-left"/>
-              </div>
         </div>
       </div>
 
