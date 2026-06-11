@@ -2,7 +2,7 @@
 .env.role
 __pycache__
 .DS_Store
-**/.obsidian/
+.obsidian/
 mockldap_ca.crt
 
 frontend/node_modules/
