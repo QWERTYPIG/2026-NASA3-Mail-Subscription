@@ -161,7 +161,9 @@ export default function HomePage({ currentUser }) {
                     <div className="flex items-center gap-3">
                       {!isNormalUser ? <InfoIcon size={24} /> : (alias.is_subscribed ? <SuccessIcon size={24} /> : <InfoIcon size={24} />)}
                       <h3 className="m-0 text-[20px] font-semibold text-black">
-                        {alias.display_name || alias.alias_name}
+                        <span className="whitespace-normal break-all max-w-full inline-block text-left">
+                            {alias.display_name || alias.alias_name}
+                        </span>
                       </h3>
                     </div>
                   }
@@ -179,7 +181,10 @@ export default function HomePage({ currentUser }) {
                   }
                 >
                   <div className="flex flex-wrap items-center gap-3 mt-1">
-                    <Badge type="info" text={alias.description || "尚無描述"} />
+                    <Badge type="info" text={
+                    <span className="whitespace-normal break-all max-w-full inline-block text-left">
+                      {alias.description || "暫無描述"}
+                    </span>}/>
                     {isModified && <Badge type="state" variant="neutral" text="未儲存" />}
                   </div>
                 </RecordCard>
