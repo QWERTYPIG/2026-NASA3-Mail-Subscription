@@ -106,7 +106,9 @@ const AdminAliasPage = () => {
                     <Mail size={22} />
                   </div>
                   <h3 className="m-0 text-[20px] font-semibold text-black">
-                    {alias.display_name || alias.alias_name}
+                    <span className="whitespace-normal break-all max-w-full inline-block text-left">
+                        {alias.display_name || alias.alias_name}
+                    </span>
                   </h3>
                 </div>
               }
