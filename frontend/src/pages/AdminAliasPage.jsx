@@ -122,7 +122,10 @@ const AdminAliasPage = () => {
               }
             >
               <div className="mt-2 [&_*]:!whitespace-normal [&_*]:break-words [&_*]:text-left w-full">
-                <Badge type="info" text={alias.description || "暫無描述"}/>
+                <Badge type="info" text={
+                    <span className="whitespace-normal break-all max-w-full inline-block text-left">
+                      {alias.description || "暫無描述"}
+                    </span>}/>
               </div>
             </RecordCard>
           ))}
