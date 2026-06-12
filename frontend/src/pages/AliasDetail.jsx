@@ -77,7 +77,25 @@ const AliasDetail = () => {
       toast.error("移除失敗");
     }
   };
+  // Handles reordering the list when a drag ends
+  const handleDragEnd = (result) => {
+    // If dropped outside the list, do nothing
+    if (!result.destination) return;
 
+    const sourceIndex = result.source.index;
+    const destinationIndex = result.destination.index;
+
+    // If dropped in the exact same spot, do nothing
+    if (sourceIndex === destinationIndex) return;
+
+    // Reorder the React state array
+    setAllMembers((prevMembers) => {
+      const newMembers = Array.from(prevMembers);
+      const [movedMember] = newMembers.splice(sourceIndex, 1);
+      newMembers.splice(destinationIndex, 0, movedMember);
+      return newMembers;
+    });
+  };
   if (loading) return <div className="flex justify-center p-20"><Loader2 className="animate-spin text-indigo-600" size={40} /></div>;
   return (
     // 1. The outer screen container
@@ -203,7 +221,7 @@ const AliasDetail = () => {
                     }
                   ]}
                   draggable
-                  onDragEnd={function NU(){}}
+                  onDragEnd={handleDragEnd}
                 />
               )}
             </div>
