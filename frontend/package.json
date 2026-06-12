@@ -10,7 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@csie/ui-library": "^0.2.3",
+    "@csie/ui-library": "^0.2.4",
     "axios": "^1.14.0",
     "lucide-react": "^1.7.0",
     "react": "^19.2.4",
