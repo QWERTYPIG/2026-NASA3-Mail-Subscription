@@ -202,6 +202,8 @@ const AliasDetail = () => {
                       )
                     }
                   ]}
+                  draggable
+                  onDragEnd={function NU(){}}
                 />
               )}
             </div>
