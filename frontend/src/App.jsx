@@ -26,6 +26,12 @@ export default function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    /*setCurrentUser({
+      username: 'layout_tester',
+      is_admin: true,
+      role: 'admin'
+    });
+    setLoading(false);*/
     const checkAuth = async () => {
       try {
         const res = await api.get('/auth/me/');
@@ -74,7 +80,7 @@ export default function App() {
     <BrowserRouter>
       <Toaster position="top-center" />
 
-      <div className="min-h-screen bg-gray-50 flex flex-col">
+      <div className="min-h-screen bg-gray-100 flex flex-col">
         
         {/* 替換為團隊開發的 Navbar */}
         <Navbar 
@@ -85,8 +91,8 @@ export default function App() {
           {navConfig
             .filter((item) => item.adminOnly ? currentUser?.role === 'admin' : true)
             .map((item) => (
-              <NavItem key={item.path} name={item.path}>
-                <Link to={item.path} className="flex items-center gap-2 w-full h-full">
+              <NavItem key={item.path} name={item.path} className="relative">
+                <Link to={item.path} className="flex items-center gap-2 w-full h-full before:absolute before:inset-0">
                   <item.icon size={18} />
                   <span>{item.label}</span>
                 </Link>
@@ -117,8 +123,8 @@ export default function App() {
               </NavDropdownItem>
             </NavDropdown>
           ) : (
-            <NavItem name="login">
-              <Link to="/login" className="flex items-center gap-2 w-full h-full text-blue-600 font-bold">
+            <NavItem name="login" className="relative">
+              <Link to="/login" className="flex items-center gap-2 w-full h-full text-blue-600 font-bold before:absolute before:inset-0">
                 <LogIn size={16} />
                 <span>登入系統</span>
               </Link>
@@ -127,7 +133,7 @@ export default function App() {
         </Navbar>
 
         {/* 主要內容區 */}
-        <main className="flex-grow container mx-auto px-8 py-10">
+        <main className="flex-grow container mx-auto px-4 md:px-8 py-6 md:py-10 w-full overflow-x-hidden">
           <Routes>
             {navConfig.map((item) => {
               const Element = componentMap[item.path];

@@ -60,31 +60,55 @@ const AdminAliasPage = () => {
   };
 
   if (loading) return <div className="flex justify-center p-20"><Loader2 className="animate-spin text-indigo-600" size={40} /></div>;
-
   return (
-    <div className="w-full bg-[#F8F9FA] min-h-screen">
-      <PageHeader>
-        <PageHeader.TitleArea title="別名系統管理" breadcrumb="首頁 / 別名管理" />
-        <PageHeader.TopRight />
-        <PageHeader.ActionArea>
+    // 1. The full-screen canvas. flex-col keeps items stacked top-to-bottom and centered!
+    <div className="w-full min-h-screen flex flex-col items-center bg-gray-100 py-8 px-4 gap-6">
+
+      {/* 2. HEADER TIER: Unified White Card Container (max-w-5xl) */}
+      <div className="w-full max-w-5xl flex flex-row items-center justify-between bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+        
+        {/* Left Side: The TitleArea with enlarged text */}
+        <div className="flex-1 [&>*]:!border-none [&_*]:!shadow-none [&_hr]:hidden">
+          <PageHeader>
+            <PageHeader.TitleArea 
+              title={
+                <span className="text-3xl sm:text-4xl font-extrabold tracking-tight">
+                  別名系統管理
+                </span>
+              } 
+              breadcrumb={
+                <span className="text-base sm:text-lg text-slate-500 mt-2 inline-block">
+                  首頁 / 別名管理
+                </span>
+              } 
+            />
+          </PageHeader>
+        </div>
+
+        {/* Right Side: The Button (extracted to sit perfectly on the same line) */}
+        <div className="flex-shrink-0 ml-4">
           <Button type="brand" size="lg" leftIcon="mdi:plus" onClick={() => setShowModal(true)}>
             新增別名
           </Button>
-        </PageHeader.ActionArea>
-      </PageHeader>
+        </div>
+      </div>
 
-      <div className="p-8 max-w-5xl mx-auto">
-        <div className="grid gap-4">
+      {/* 3. CONTENT TIER: Narrower (max-w-4xl) to create visual hierarchy */}
+      <div className="w-full max-w-4xl flex flex-col gap-6 p-6 sm:p-8 bg-gray-50 rounded-2xl shadow-sm">
+        
+        <div className="w-full flex flex-col gap-4 items-stretch [&>*]:w-full [&>*]:!max-w-none">
           {aliases.map(alias => (
             <RecordCard
               key={alias.alias_name}
               header={
                 <div className="flex items-center gap-4">
-                  <div className="bg-indigo-50 p-2.5 rounded-full text-indigo-600">
+                  <div className="bg-slate-300 p-2.5 rounded-full text-indigo-600">
                     <Mail size={22} />
                   </div>
                   <h3 className="m-0 text-[20px] font-semibold text-black">
-                    {alias.display_name || alias.alias_name}
+                    <span className="whitespace-normal break-all max-w-full inline-block text-left">
+                        {alias.display_name || alias.alias_name}
+                    </span>
                   </h3>
                 </div>
               }
@@ -99,27 +123,29 @@ const AdminAliasPage = () => {
                 </div>
               }
             >
-              <div className="mt-2">
-                <Badge type="info" text={alias.description || "暫無描述"} />
+              <div className="mt-2 [&_*]:!whitespace-normal [&_*]:break-words [&_*]:text-left w-full">
+                <Badge type="info" text={
+                    <span className="whitespace-normal break-all max-w-full inline-block text-left">
+                      {alias.description || "暫無描述"}
+                    </span>}/>
               </div>
             </RecordCard>
           ))}
         </div>
       </div>
 
+      {/* 4. MODAL: Stays safely outside the layout boxes */}
       {showModal && (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-[100]">
-          <form onSubmit={handleCreate} className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8 space-y-6 animate-in zoom-in-95 duration-200">
+           <form onSubmit={handleCreate} className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 sm:p-8 m-4 space-y-6 animate-in zoom-in-95 duration-200">
             <h2 className="text-xl font-bold text-slate-800">建立新郵件別名</h2>
             <div className="space-y-4">
-              {/* 修正 onChange */}
               <Input 
                 label="別名名稱 (例如: security-alerts)"
                 placeholder="輸入別名..."
                 value={newAlias.name}
                 onChange={(val) => setNewAlias({...newAlias, name: val})}
               />
-              {/* 修正 onChange */}
               <Input 
                 label="描述說明"
                 placeholder="簡單描述此群組用途..."
