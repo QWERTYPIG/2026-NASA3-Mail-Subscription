@@ -1,18 +1,38 @@
 # NTU CSIE Mail Subscription System
-## Project
 
-系上 mail alias 訂閱管理系統。使用者可訂閱或退訂各個 mail alias；Admin 可管理成員與 alias。
+## Overview
 
-## Docs
+Departmental mail alias subscription management: users sign in with LDAP accounts to subscribe or unsubscribe. Administrators in the LDAP `mailAdmin` group manage aliases and members.
 
-所有架構與技術決策文件在 `docs/`。`docs/architecture.md` 包含整個 project 的技術框架（tech stack、data flows、doc index），每個 session 都應優先參考。
+## Topic docs
 
-@docs/architecture.md
+Start with `docs/README.md` for the project entry point and repository layout, then read by task:
 
-`progress/` 資料夾為組員自由記錄個人進度用，除非使用者明確要求，否則不得主動讀取或參考其內容。
+| Document | When to read |
+|---|---|
+| `docs/01-architecture.md` | System boundaries, data flows, synchronization, business rules, and HA limitations. |
+| `docs/02-dependency-hardware.md` | External dependencies, ports, volumes, host files, and unverified infrastructure assumptions. |
+| `docs/03-setup.md` | Development setup, pre-launch validation gate, Compose startup, testing, and troubleshooting. |
+| `docs/04-api-and-db.md` | API routes, session/CSRF, permissions, requests/responses, schema, queue behavior, and known implementation differences. |
+| `docs/05-migration.md` | Deployment, migrations, HA monitor, DB synchronization, backup, restore, and rollback. |
 
-## Constraints
+## Testing
 
-- LDAP 是唯一的 source of truth，不得直接修改 LDAP——所有寫入都透過 task queue 由 Django-Q worker 非同步執行
-- `ou=Aliases` 的寫入者只有 Django-Q worker，Django API 不直接寫入
-- **禁止自行執行任何會更動 LDAP tree 的指令**（`ldapadd`、`ldapmodify`、`ldapdelete` 等）——應告知使用者正確的指令與步驟，由使用者自己執行
+Run the checks relevant to your changes from the project root. Before Compose-based checks, pass the validation gate in `docs/03-setup.md` and keep local `FLUSH_ENABLED=0`.
+
+| Change scope | Checks |
+|---|---|
+| Backend (`apps/`, `core/`) | `docker compose exec web python manage.py check`; `docker compose exec web python manage.py test` |
+| Frontend (`frontend/`) | `docker compose exec frontend npm run lint`; `docker compose exec frontend npm run build`; verify UI changes in a browser. |
+| HA monitor (`scripts/monitor/`) | `python3 -m unittest discover -s scripts/monitor -p 'test_*.py'` |
+| Startup or service configuration | Verify services and logs per `docs/03-setup.md`; `GET /api/v1/health/` must return `200` with `{"status":"ok"}`, and the frontend must load. |
+| Documentation | Verify referenced paths exist and commands match the current implementation. |
+
+Mock LDAP operations in tests; this repository has no local LDAP fixture. Report actual results and reasons for skipped checks. CI runs security scans only, not these checks.
+
+## Hard Constraint
+
+- LDAP is the sole source of truth; PostgreSQL is only a local cache and task queue. Changes requiring LDAP synchronization must update the cache and task queue in one transaction, then be written asynchronously by the ACTIVE node's Django-Q worker. The API must not write directly to `ou=Aliases`.
+- Agents must not execute operations that mutate the LDAP tree, including `ldapadd`, `ldapmodify`, `ldapdelete`, or indirect writes through real API enqueue/worker flush operations. Provide steps for the user to execute instead.
+- Destructive operations such as DB restore, `db_sync.sh`, and deleting data volumes require a confirmed target, backups, and human approval.
+- `legacy/` contains personal team notes; do not read or reference them unless the user explicitly requests it.
