@@ -6,7 +6,7 @@ Departmental mail alias subscription management: users sign in with LDAP account
 
 ## Topic docs
 
-Start with `docs/README.md` for the project entry point and repository layout, then read by task:
+Start with `README.md` for the project entry point and repository layout, then read by task:
 
 | Document | When to read |
 |---|---|
