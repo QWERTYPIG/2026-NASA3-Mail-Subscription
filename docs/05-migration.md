@@ -44,6 +44,28 @@ docker compose -f "$COMPOSE_FILE" exec web python -m unittest scripts/monitor/te
 
 ## 執行資料庫遷移
 
+### 升級到 `0003_sync_task` 前：清空舊 queue
+
+`0003_sync_task` 把 `alias_task_queue` 與 `user_task_queue` 合併成 `sync_task`。兩張舊表的 id 各自獨立，跨表順序無法還原，所以**任一舊 queue 有資料時 migration 會拒絕執行**（`RuntimeError: Refusing to migrate ...`），不會遺失或亂序 task。
+
+清空 queue 會寫入 LDAP，必須由維運人員在 ACTIVE 節點以**舊版**程式執行，agent 不得代為執行：
+
+1. 所有節點停止 `web`，避免新的變更進入 queue；ACTIVE 節點的舊版 `worker` 保持運作且 `FLUSH_ENABLED=1`。
+2. 等待排程 flush（每 30 分鐘）執行，直到兩張舊 queue 都是 0 筆。以下查詢只讀取資料：
+
+   ```bash
+   COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
+   docker compose -f "$COMPOSE_FILE" exec -T postgres sh -ec \
+     'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT (SELECT count(*) FROM alias_task_queue), (SELECT count(*) FROM user_task_queue);"'
+   ```
+
+3. 若有 task 持續失敗而無法清空，停止升級並人工判斷；不要直接刪除 queue row。
+4. 停止 `worker`，部署新版後再執行下方 `migrate`。
+
+此 migration 需要 LDAP 同步 worker 已改用 `sync_task`（見 [04 API 與資料庫](./04-api-and-db.md) 的「過渡狀態」），完成前不得部署。
+
+### 執行 migrate
+
 首次啟動或版本更新後執行：
 
 ```bash
@@ -53,7 +75,7 @@ MIGRATION_FILE="/tmp/mailsub-migrations-$(date +%Y%m%d-%H%M%S).txt"
 docker compose -f "$COMPOSE_FILE" exec web python manage.py showmigrations | tee "$MIGRATION_FILE"
 ```
 
-預期建立 Django、Django-Q 與 subscriptions schema；`0002` 建立每 30 分鐘執行 `flush_ldap_tasks` 的 schedule，且 `showmigrations` 顯示已套用。migration 不會建立正式 alias fixture，也不會回復 LDAP；初始資料須經既有應用程式流程建立。
+預期建立 Django、Django-Q 與 subscriptions schema；`0002` 建立每 30 分鐘執行 `flush_ldap_tasks` 的 schedule；`0003` 建立 `sync_task` 並刪除兩張舊 queue；`0004` 把 `alias.user_id` 搬進 `alias_member`；`showmigrations` 顯示已套用。migration 不會建立正式 alias fixture，也不會回復 LDAP；初始資料須經既有應用程式流程建立。
 
 `db_sync.sh` 由 ACTIVE monitor 依 `SYNC_INTERVAL` 觸發：先 `pg_dump`，再對 `DB_REPLICA_HOSTS` 執行 `pg_restore --clean --if-exists`，成功後寫入 `LAST_SYNC_FILE`。它不是 native replication；可用下列命令確認工具與狀態：
 
@@ -176,7 +198,7 @@ curl --fail --retry 30 --retry-delay 2 --retry-connrefused \
 
 1. 記錄 `docker compose ps`、logs、monitor 狀態與 LDAP queue。
 2. 將 build context 固定到已驗證的前一個 commit，或使用事先保存的 image，再執行 `docker compose build` 與 `up -d`。
-3. 若新 migration 不可逆，不可只降版 image；依 migration 專屬方案處理，或在隔離資料庫驗證 backup。
+3. 若新 migration 不可逆，不可只降版 image；依 migration 專屬方案處理，或在隔離資料庫驗證 backup。`0004_alias_member` 可反向（依 `alias_member.id` 重建 `alias.user_id`）；`0003_sync_task` 只在 `sync_task` 為空時可反向，否則拒絕，需先以新版 worker 清空 queue。
 4. 以 `docker compose ps`、`/api/v1/health/`、`/health`、logs 與 queue 驗證；未完成驗證前保持 `FLUSH_ENABLED=0`。
 
 ## 已知限制

@@ -79,7 +79,7 @@
 - **Request/path**：`alias_name`、`display_name`、`description` 必填且不可空白；alias name 僅允許英數字與 `-`。完整 contract example：`{"alias_name":"security-alerts","display_name":"Security Alerts","description":"重要通知"}`。
 - **Success**：`201`，alias representation（同上）。
 - **主要 errors**：validation `400` 為 DRF serializer 格式；重複名稱 `409`：`{"error":"Alias name already exists.","code":"CONFLICT","details":{"existing_alias":"security-alerts"}}`；未預期錯誤 `500` custom body。
-- **Side effects**：同一 transaction 建立 `alias` 與 `alias_task_queue(action="add")`。
+- **Side effects**：同一 transaction 建立 `alias` 與 `sync_task(kind="alias", action="add")`。
 
 <a id="alias-detail"></a>
 ### `GET|PATCH|PUT|DELETE /api/v1/manage/aliases/{alias_name}/`
@@ -88,14 +88,14 @@
 - **Request/path**：`GET`、`DELETE` 無 body。`PATCH`/`PUT` 可含 `display_name`、`description`；兩者目前都以 partial update 處理。`display_name` 最長 255、`description` 最長 500，均可空白。
 - **Success**：`GET`/`PATCH`/`PUT` 為 `200` alias representation；`DELETE` 為 `204` 無 body。
 - **主要 errors**：`GET` 不存在時為 DRF/framework `404`；`PATCH`/`PUT`/`DELETE` 不存在為 custom `404 NOT_FOUND`；更新 validation `400` custom `VALIDATION_ERROR`；未預期錯誤 `500` custom `INTERNAL_SERVER_ERROR`。
-- **Side effects**：更新只改 `alias`，不建 queue。刪除在 transaction 內先建 `alias_task_queue(action="remove")` 再刪除 `alias`；LDAP 由 worker 處理。
+- **Side effects**：更新只改 `alias`，不建 queue。刪除在 transaction 內先建 `sync_task(kind="alias", action="remove")` 再刪除 `alias`；該 alias 的 `alias_member` rows 由 `ON DELETE CASCADE` 一併刪除；LDAP 由 worker 處理。
 
 <a id="member-list"></a>
 ### `GET /api/v1/manage/aliases/{alias_name}/users/`
 
 - **權限**：Admin。
 - **Request/path**：無。
-- **Success**：`200`，UID 陣列，例如 `["b12345678"]`（contract example）。
+- **Success**：`200`，UID 陣列，依加入順序（`alias_member.id` 升冪），例如 `["b12345678"]`（contract example）。
 - **主要 errors**：alias 不存在 `404` custom `NOT_FOUND`；未預期錯誤 `500` custom。
 - **Side effects**：無。
 
@@ -105,16 +105,16 @@
 - **Request/path**：`{"uid":"b12345678"}`；server 會 trim/lowercase，最多 50 字元、僅英數字，並同步查 LDAP；`gidNumber` 必須含 `450`、`400`、`500` 或 `200`。
 - **Success**：`200`，`{"status":"success","message":"User b12345678 added to activities"}`。
 - **主要 errors**：UID/LDAP/GID validation `400` custom `VALIDATION_ERROR`（`details.uid`）；重複 UID `409` custom `CONFLICT`；alias 不存在 `404`；未預期錯誤 `500`。
-- **Side effects**：transactionally 更新 `alias.user_id`，並建立 `user_task_queue(action="add")`。
+- **Side effects**：transactionally 新增一筆 `alias_member`，並建立 `sync_task(kind="member", action="add")`。
 
 <a id="member-detail"></a>
 ### `DELETE /api/v1/manage/aliases/{alias_name}/users/{uid}/`
 
 - **權限**：Admin。
-- **Request/path**：無 body。`uid` 是 Django `<str:uid>`；空字串不匹配 route，且不做 trim、lowercase 或格式 validation，必須精確匹配 `alias.user_id`。
+- **Request/path**：無 body。`uid` 是 Django `<str:uid>`；空字串不匹配 route，且不做 trim、lowercase 或格式 validation，必須精確匹配 `alias_member.user_uid`。
 - **Success**：`204`，無 body。
 - **主要 errors**：alias 不存在或 UID 不在 alias 為 `404` custom `NOT_FOUND`；未預期錯誤 `500` custom。
-- **Side effects**：transactionally 從 `alias.user_id` 移除 UID，建立 `user_task_queue(action="remove")`。
+- **Side effects**：transactionally 刪除該 `alias_member` row，建立 `sync_task(kind="member", action="remove")`。
 
 <a id="subscriptions"></a>
 ### `GET|PUT /api/v1/user/subscriptions/`
@@ -123,7 +123,7 @@
 - **Request/path**：`GET` 無 body。`PUT` 必須送出每個現有 alias 恰好一次的完整 map，key 為 alias name、value 為 JSON boolean；不可缺漏或含未知 alias，例如 `{"activities":true,"workstation":false}`。
 - **Success**：`GET` 為 `200`，依 alias name 排序的陣列，每筆含 `alias_name`、`display_name`、`description`、`is_subscribed`。`PUT` 為 `202`：`{"status":"accepted","message":"Subscription update accepted.","changed_aliases":["activities"],"task_ids":[42]}`。
 - **主要 errors**：permission `403`；PUT validation `400` 為 DRF serializer 格式（通常 `non_field_errors`）；每 user cooldown 內再次 PUT 為 `429`，body 是 DRF 預設格式，未由本專案定義；未預期錯誤可能為 framework `5xx`。
-- **Side effects**：只對實際變更在 transaction 內更新 `alias.user_id` 並建立 `user_task_queue`；LDAP 非同步同步。
+- **Side effects**：只對實際變更在 transaction 內新增或刪除 `alias_member` row，並建立 `sync_task(kind="member")`；`task_ids` 為 `sync_task.id`；LDAP 非同步同步。
 
 ## Contract examples: session and mutation
 
@@ -160,17 +160,18 @@ curl --fail-with-body -sS -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
 
 | Table | Columns | Constraints / purpose |
 |---|---|---|
-| `alias` | `alias_name varchar(255)`, `display_name varchar(255)`, `description text`, `user_id varchar(255)[]` | `alias_name` PK/unique/required，regex `^[a-zA-Z0-9-]+$`；其餘非 NULL、default `''`/`[]`；description API max 500，非 DB constraint。 |
-| `alias_task_queue` | `id bigint`, `alias_name varchar(255)`, `action varchar(10)` | PK auto-increment；action 僅 `add`/`remove`；無 FK。 |
-| `user_task_queue` | `id bigint`, `alias_name varchar(255)`, `user_uid varchar(255)`, `action varchar(10)` | PK auto-increment；action 僅 `add`/`remove`；無 FK。 |
+| `alias` | `alias_name varchar(255)`, `display_name varchar(255)`, `description text` | `alias_name` PK/unique/required，regex `^[a-zA-Z0-9-]+$`；其餘非 NULL、default `''`；description API max 500，非 DB constraint。 |
+| `alias_member` | `id bigint`, `alias_name varchar(255)`, `user_uid varchar(255)` | 一列一個成員（3NF）。PK auto-increment，`id` 順序即加入順序；`alias_name` FK → `alias`，`ON DELETE CASCADE`；`UNIQUE(alias_name, user_uid)`；`user_uid` 有 index。 |
+| `sync_task` | `id bigint`, `kind varchar(10)`, `action varchar(10)`, `alias_name varchar(255)`, `user_uid varchar(255) NULL` | alias 與成員共用的單一 LDAP 同步 queue。PK auto-increment，`id` 即兩種 task 的全域處理順序（可能有空號）。`kind` 僅 `alias`/`member`、`action` 僅 `add`/`remove`（DB CHECK）；`kind="alias"` 時 `user_uid` 必須為 NULL，`kind="member"` 時必須有值（DB CHECK）。刻意不設 FK：task 須在 alias row 刪除後仍存在。index `(alias_name, id)`。 |
 
-三張 table 以字串 `alias_name` 對應；無 timestamp。PostgreSQL 儲存 metadata、member cache、queue；Redis 只供 cache、cooldown、flush lock。`TIME_ZONE=UTC`、`USE_TZ=True`，API 目前沒有 date/datetime 欄位。
+`alias_member` 以 FK、`sync_task` 以字串 `alias_name` 對應 `alias`；無 timestamp。PostgreSQL 儲存 metadata、member cache、queue；Redis 只供 cache、cooldown、flush lock。`TIME_ZONE=UTC`、`USE_TZ=True`，API 目前沒有 date/datetime 欄位。
 
 ## Runtime behavior
 
-- LDAP 是 alias/member source of truth；Django API 不直接寫入 `ou=Aliases`。Django-Q worker 依 queue `id` 升冪處理，失敗 row 保留重試；LDAP retry delay 為 `0.5, 1, 2, 4, 8` 秒。
+- LDAP 是 alias/member source of truth；Django API 不直接寫入 `ou=Aliases`。`sync_task` 依 `id` 升冪處理，失敗 row 保留重試；LDAP retry delay 為 `0.5, 1, 2, 4, 8` 秒。
+- **過渡狀態**：`apps/subscriptions/tasks.py`（LDAP 同步 worker）尚未改用 `sync_task`／`alias_member`，仍引用已移除的 `AliasTaskQueue`、`UserTaskQueue` 與 `alias.user_id`，在 port 到 sync interface 前無法執行。此狀態不得部署。
 - `PUT /user/subscriptions/` 每 user 以 Redis key `user_subscription_cooldown:<username>` 冷卻 600 秒；throttle 在 validation 前佔用 slot，失敗 request 也可能留下 cooldown。worker schedule 為 30 分鐘，flush lock TTL 為 300 秒；這些都是 duration，不是 API datetime。
-- migration `0001_initial` 建立三張 table；`0002_add_flush_ldap_schedule` 建立 `flush_ldap_tasks` 的 30 分鐘 schedule。
+- migration `0001_initial` 建立 `alias`、`alias_task_queue`、`user_task_queue`；`0002_add_flush_ldap_schedule` 建立 `flush_ldap_tasks` 的 30 分鐘 schedule；`0003_sync_task` 以 `sync_task` 取代兩張舊 queue（舊 queue 有資料時拒絕執行，反向時 `sync_task` 有資料亦拒絕）；`0004_alias_member` 把 `alias.user_id` array 搬進 `alias_member` 後刪除該欄位（可反向，依 `id` 重建 array）。部署步驟見 [05 Migration](./05-migration.md)。
 
 ## Known implementation differences
 

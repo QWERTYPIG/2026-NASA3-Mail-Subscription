@@ -49,17 +49,17 @@ class AliasUpdateSerializer(serializers.ModelSerializer):
 
 
 class SubscriptionSerializer(serializers.ModelSerializer):
-    """User alias listing with subscription status."""
+    """User alias listing with subscription status.
 
-    is_subscribed = serializers.SerializerMethodField()
+    Expects the queryset to be annotated with ``is_subscribed`` (see
+    ``UserSubscriptionListView.get``) so the list costs one query.
+    """
+
+    is_subscribed = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = Alias
         fields = ["alias_name", "display_name", "description", "is_subscribed"]
-
-    def get_is_subscribed(self, obj):
-        user = self.context["request"].user
-        return user.username in obj.user_id
 
 
 class UserSubscriptionUpdateSerializer(serializers.Serializer):

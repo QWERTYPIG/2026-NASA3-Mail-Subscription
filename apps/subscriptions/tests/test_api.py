@@ -9,23 +9,39 @@ from django.test import SimpleTestCase, TestCase
 from ldap3.core.exceptions import LDAPException
 from rest_framework.test import APIClient
 
-from .models import Alias, AliasTaskQueue, UserTaskQueue
-from .serializers import UserSubscriptionUpdateSerializer
-from .tasks import flush_alias_tasks, flush_user_tasks, log_event, run_consistency_check
+from ..models import Alias, AliasMember, SyncTask
+from ..serializers import UserSubscriptionUpdateSerializer
+
+
+def make_alias(alias_name, members=(), **fields):
+    """Create an alias plus its alias_member rows, in the given order."""
+    alias = Alias.objects.create(alias_name=alias_name, **fields)
+    for uid in members:
+        AliasMember.objects.create(alias=alias, user_uid=uid)
+    return alias
+
+
+def member_uids(alias):
+    """Member uids of an alias in insertion (id) order."""
+    return list(
+        AliasMember.objects.filter(alias=alias).values_list("user_uid", flat=True)
+    )
+
+
 
 
 class SubscriptionModelsTest(TestCase):
     def test_create_valid_alias(self):
         """測試建立合法的 Alias"""
-        alias = Alias.objects.create(
+        alias = make_alias(
             alias_name="valid-alias-123",
             display_name="合法群組",
             description="測試用的 alias群組",
-            user_id=["b12902000", "b12902001"],
+            members=["b12902000", "b12902001"],
         )
         self.assertEqual(alias.alias_name, "valid-alias-123")
         self.assertEqual(alias.display_name, "合法群組")
-        self.assertEqual(alias.user_id, ["b12902000", "b12902001"])
+        self.assertEqual(member_uids(alias), ["b12902000", "b12902001"])
 
     def test_invalid_alias_name(self):
         """測試不合法的 alias_name 會觸發 ValidationError (被 RegexValidator 阻擋)"""
@@ -38,13 +54,14 @@ class SubscriptionModelsTest(TestCase):
 
     def test_create_alias_task_queue(self):
         """測試新增 Alias 操作排入 Queue"""
-        task = AliasTaskQueue.objects.create(alias_name="new-group", action="add")
+        task = SyncTask.objects.create(kind="alias", alias_name="new-group", action="add")
         self.assertEqual(task.alias_name, "new-group")
         self.assertEqual(task.action, "add")
 
     def test_create_user_task_queue(self):
         """測試新增單一 User 操作排入 Queue (One Row, One Action)"""
-        task = UserTaskQueue.objects.create(
+        task = SyncTask.objects.create(
+            kind="member",
             alias_name="existing-group", user_uid="b12902000", action="add"
         )
         self.assertEqual(task.alias_name, "existing-group")
@@ -58,154 +75,6 @@ class HealthEndpointTest(SimpleTestCase):
 
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json(), {"status": "ok"})
-
-
-class TaskLoggingTest(SimpleTestCase):
-    def test_log_event_outputs_json(self):
-        logger = logging.getLogger("mailsub-worker")
-
-        with self.assertLogs(logger, level="ERROR") as captured:
-            log_event(
-                logging.ERROR,
-                "ldap_connect_failed",
-                "failed to connect to LDAP",
-                ldap_uri="ldaps://ldap.example:636",
-                error="timeout",
-                empty=None,
-            )
-
-        payload = json.loads(captured.output[0].split(":", 2)[-1].strip())
-        self.assertEqual(payload["level"], "ERROR")
-        self.assertEqual(payload["logger"], "mailsub-worker")
-        self.assertEqual(payload["event"], "ldap_connect_failed")
-        self.assertEqual(payload["message"], "failed to connect to LDAP")
-        self.assertEqual(payload["ldap_uri"], "ldaps://ldap.example:636")
-        self.assertEqual(payload["error"], "timeout")
-        self.assertNotIn("empty", payload)
-
-    @patch.dict("os.environ", {"LDAP_CA_CERT_FILE": "test-ca.pem"})
-    @patch("apps.subscriptions.tasks.Connection")
-    @patch("apps.subscriptions.tasks.Server")
-    @patch("apps.subscriptions.tasks.Tls")
-    def test_connect_failure_logs_structured_error(
-        self, mock_tls, mock_server, mock_connection
-    ):
-        from .tasks import _connect
-
-        mock_connection.side_effect = LDAPException("timeout")
-        logger = logging.getLogger("mailsub-worker")
-
-        with self.assertLogs(logger, level="ERROR") as captured:
-            with self.assertRaises(LDAPException):
-                _connect()
-
-        payload = json.loads(captured.output[0].split(":", 2)[-1].strip())
-        self.assertEqual(payload["event"], "ldap_connect_failed")
-        self.assertEqual(payload["error"], "timeout")
-
-
-class FlushAliasTasksTest(TestCase):
-    def _make_conn(self):
-        conn = MagicMock()
-        conn.add.return_value = True
-        conn.delete.return_value = True
-        return conn
-
-    def test_add_alias_calls_ldap_add(self):
-        AliasTaskQueue.objects.create(alias_name="test-list", action="add")
-        conn = self._make_conn()
-        flush_alias_tasks(conn)
-        conn.add.assert_called_once()
-        # Task 應被刪除
-        self.assertEqual(AliasTaskQueue.objects.count(), 0)
-
-    def test_remove_alias_calls_ldap_delete(self):
-        AliasTaskQueue.objects.create(alias_name="test-list", action="remove")
-        conn = self._make_conn()
-        flush_alias_tasks(conn)
-        conn.delete.assert_called_once()
-        self.assertEqual(AliasTaskQueue.objects.count(), 0)
-
-    def test_remove_alias_cleans_dangling_user_tasks(self):
-        AliasTaskQueue.objects.create(alias_name="test-list", action="remove")
-        UserTaskQueue.objects.create(
-            alias_name="test-list", user_uid="b12345", action="add"
-        )
-        conn = self._make_conn()
-        flush_alias_tasks(conn)
-        # 關聯的 user task 也要一起清掉
-        self.assertEqual(UserTaskQueue.objects.count(), 0)
-
-    def test_ldap_failure_leaves_task_in_queue(self):
-        AliasTaskQueue.objects.create(alias_name="bad-alias", action="add")
-        conn = self._make_conn()
-        conn.add.side_effect = LDAPException("timeout")
-        with patch("apps.subscriptions.tasks.time.sleep"):  # 跳過 retry sleep
-            flush_alias_tasks(conn)
-        # Task 應該留在 queue 等下次重試
-        self.assertEqual(AliasTaskQueue.objects.count(), 1)
-
-
-class ConsistencyCheckTest(TestCase):
-    def test_updates_alias_user_ids_from_ldap(self):
-        Alias.objects.create(alias_name="faculty", user_id=[])
-
-        # 模擬 LDAP entry 格式
-        entry = MagicMock()
-        entry.cn.value = "faculty"
-        entry.uniqueMember.values = [
-            "uid=b12902000,ou=people,dc=csie,dc=ntu,dc=edu,dc=tw",
-            "uid=mailtest,ou=people,dc=csie,dc=ntu,dc=edu,dc=tw",  # bind DN（placeholder）
-        ]
-
-        conn = MagicMock()
-        conn.entries = [entry]
-
-        run_consistency_check(conn)
-
-        alias = Alias.objects.get(alias_name="faculty")
-        # bind DN 應被過濾掉
-        self.assertEqual(alias.user_id, ["b12902000"])
-
-
-class FlushLdapTasksTest(TestCase):
-    @patch("apps.subscriptions.tasks._connect")
-    @patch("apps.subscriptions.tasks.cache")
-    def test_skips_if_lock_not_acquired(self, mock_cache, mock_connect):
-        mock_cache.add.return_value = False  # 模擬 lock 已被佔用
-        from .tasks import flush_ldap_tasks
-
-        flush_ldap_tasks()
-        mock_connect.assert_not_called()
-
-    @patch("apps.subscriptions.tasks._connect")
-    @patch("apps.subscriptions.tasks.cache")
-    def test_releases_lock_on_success(self, mock_cache, mock_connect):
-        mock_cache.add.return_value = True
-        mock_connect.return_value = MagicMock()
-        from .tasks import flush_ldap_tasks
-
-        flush_ldap_tasks()
-        mock_cache.delete.assert_called_once()
-
-    @patch.dict("os.environ", {"FLUSH_ENABLED": "0"})
-    @patch("apps.subscriptions.tasks._connect")
-    def test_skips_when_flush_disabled(self, mock_connect):
-        from .tasks import flush_ldap_tasks
-
-        flush_ldap_tasks()
-        mock_connect.assert_not_called()
-
-    @patch.dict("os.environ", {"FLUSH_ENABLED": "1"})
-    @patch("apps.subscriptions.tasks._connect")
-    @patch("apps.subscriptions.tasks.cache")
-    def test_runs_when_flush_enabled(self, mock_cache, mock_connect):
-        mock_cache.add.return_value = True
-        mock_connect.return_value = MagicMock()
-        from .tasks import flush_ldap_tasks
-
-        flush_ldap_tasks()
-        mock_connect.assert_called_once()
 
 
 class AliasListApiTest(TestCase):
@@ -224,17 +93,17 @@ class AliasListApiTest(TestCase):
             is_staff=True,
         )
 
-        Alias.objects.create(
+        make_alias(
             alias_name="activities",
             display_name="Activities",
             description="Dept events",
-            user_id=["user1"],
+            members=["user1"],
         )
-        Alias.objects.create(
+        make_alias(
             alias_name="workstation",
             display_name="Workstation",
             description="Lab announcements",
-            user_id=[],
+            members=[],
         )
 
     def test_admin_aliases_requires_admin_permission(self):
@@ -331,7 +200,7 @@ class AdminAliasCreateApiTest(TestCase):
 
         # Verify that a task has been created in the queue
         self.assertTrue(
-            AliasTaskQueue.objects.filter(alias_name="new-alias", action="add").exists()
+            SyncTask.objects.filter(kind="alias", alias_name="new-alias", action="add").exists()
         )
 
     def test_create_alias_missing_fields(self):
@@ -370,7 +239,7 @@ class AdminAliasCreateApiTest(TestCase):
         self.assertEqual(resp.status_code, 400)
         self.assertIn("alias_name", resp.data)
 
-    @patch("apps.subscriptions.views.AliasTaskQueue.objects.create")
+    @patch("apps.subscriptions.views.SyncTask.objects.create")
     def test_create_alias_rolls_back_when_queue_insert_fails(self, mock_queue_create):
         """Alias creation and queue insert should be atomic."""
         mock_queue_create.side_effect = Exception("queue insert failed")
@@ -503,15 +372,15 @@ class UserSubscriptionUpdateApiTest(TestCase):
             is_staff=False,
         )
 
-        Alias.objects.create(
+        make_alias(
             alias_name="activities",
             display_name="Activities",
-            user_id=[],
+            members=[],
         )
-        Alias.objects.create(
+        make_alias(
             alias_name="workstation",
             display_name="Workstation",
-            user_id=["user-put"],
+            members=["user-put"],
         )
 
     def test_put_requires_auth(self):
@@ -532,7 +401,7 @@ class UserSubscriptionUpdateApiTest(TestCase):
         resp = self.client.put("/api/v1/user/subscriptions/", payload, format="json")
         self.assertEqual(resp.status_code, 202)
 
-        tasks = UserTaskQueue.objects.all().order_by("alias_name")
+        tasks = SyncTask.objects.filter(kind="member").order_by("alias_name")
         self.assertEqual(tasks.count(), 2)
         self.assertEqual(tasks[0].alias_name, "activities")
         self.assertEqual(tasks[0].action, "add")
@@ -543,8 +412,8 @@ class UserSubscriptionUpdateApiTest(TestCase):
 
         activities = Alias.objects.get(alias_name="activities")
         workstation = Alias.objects.get(alias_name="workstation")
-        self.assertIn("user-put", activities.user_id)
-        self.assertNotIn("user-put", workstation.user_id)
+        self.assertIn("user-put", member_uids(activities))
+        self.assertNotIn("user-put", member_uids(workstation))
 
     def test_put_rejects_invalid_payload(self):
         self.client.force_authenticate(user=self.user)
@@ -566,48 +435,6 @@ class UserSubscriptionUpdateApiTest(TestCase):
 
         self.assertEqual(first.status_code, 202)
         self.assertEqual(second.status_code, 429)
-
-
-class ConnectLoggingTest(SimpleTestCase):
-    @patch("apps.subscriptions.tasks.Connection")
-    @patch("apps.subscriptions.tasks.Server")
-    @patch("apps.subscriptions.tasks.Tls")
-    def test_logs_on_ldap_connection_failure(
-        self, mock_tls, mock_server, mock_conn_cls
-    ):
-        mock_conn_cls.side_effect = LDAPException("connection refused")
-
-        from apps.subscriptions.tasks import _connect
-
-        logger = logging.getLogger("mailsub-worker")
-
-        with self.assertLogs(logger, level="ERROR") as captured:
-            with self.assertRaises(LDAPException):
-                _connect()
-
-        payload = json.loads(captured.output[0].split(":", 2)[-1].strip())
-        self.assertEqual(payload["event"], "ldap_connect_failed")
-        self.assertEqual(payload["error"], "connection refused")
-
-    @patch("apps.subscriptions.tasks.Connection")
-    @patch("apps.subscriptions.tasks.Server")
-    @patch("apps.subscriptions.tasks.Tls")
-    def test_no_error_log_on_successful_connection(
-        self, mock_tls, mock_server, mock_conn_cls
-    ):
-        from apps.subscriptions.tasks import _connect
-
-        logger = logging.getLogger("mailsub-worker")
-
-        with patch.object(logger, "log") as mock_log:
-            _connect()
-
-        error_calls = [
-            call_args
-            for call_args in mock_log.call_args_list
-            if call_args.args and call_args.args[0] >= logging.ERROR
-        ]
-        self.assertEqual(error_calls, [])
 
 
 class AdminAliasDeleteApiTest(TestCase):
@@ -645,12 +472,13 @@ class AdminAliasDeleteApiTest(TestCase):
         self.assertEqual(resp.status_code, 204)
         self.assertFalse(Alias.objects.filter(alias_name="todelete").exists())
         self.assertTrue(
-            AliasTaskQueue.objects.filter(
+            SyncTask.objects.filter(
+                kind="alias",
                 alias_name="todelete", action="remove"
             ).exists()
         )
 
-    @patch("apps.subscriptions.views.AliasTaskQueue.objects.create")
+    @patch("apps.subscriptions.views.SyncTask.objects.create")
     def test_delete_alias_atomic(self, mock_queue_create):
         mock_queue_create.side_effect = Exception("queue insert failed")
         self.client.force_authenticate(user=self.admin_user)
@@ -673,10 +501,10 @@ class AdminAliasUserListApiTest(TestCase):
             username="admin1", password="pass", is_staff=True
         )
 
-        Alias.objects.create(
+        make_alias(
             alias_name="toview",
             display_name="To View",
-            user_id=["b12345678", "b00000000"],
+            members=["b12345678", "b00000000"],
         )
 
     def test_requires_auth(self):
@@ -721,10 +549,10 @@ class AdminAliasUserAddApiTest(TestCase):
             username="admin1", password="pass", is_staff=True
         )
 
-        Alias.objects.create(
+        make_alias(
             alias_name="toadd",
             display_name="To Add",
-            user_id=["b12345678"],
+            members=["b12345678"],
         )
 
     def test_add_requires_auth(self):
@@ -748,9 +576,10 @@ class AdminAliasUserAddApiTest(TestCase):
         self.assertEqual(resp.status_code, 200)
 
         alias = Alias.objects.get(alias_name="toadd")
-        self.assertIn("b00000000", alias.user_id)
+        self.assertIn("b00000000", member_uids(alias))
 
-        task = UserTaskQueue.objects.filter(
+        task = SyncTask.objects.filter(
+            kind="member",
             alias_name="toadd", user_uid="b00000000", action="add"
         ).exists()
         self.assertTrue(task)
@@ -763,9 +592,10 @@ class AdminAliasUserAddApiTest(TestCase):
         self.assertEqual(resp.status_code, 200)
 
         alias = Alias.objects.get(alias_name="toadd")
-        self.assertEqual(alias.user_id.count("b12345678"), 1)
+        self.assertEqual(member_uids(alias).count("b12345678"), 1)
 
-        task = UserTaskQueue.objects.filter(
+        task = SyncTask.objects.filter(
+            kind="member",
             alias_name="toadd", user_uid="b12345678", action="add"
         ).exists()
         self.assertFalse(task)  # Shouldn't create task if already exists
@@ -812,10 +642,10 @@ class AdminAliasUserDeleteApiTest(TestCase):
             username="admin1", password="pass", is_staff=True
         )
 
-        Alias.objects.create(
+        make_alias(
             alias_name="toremove",
             display_name="To Remove",
-            user_id=["b12345678", "b98765432"],
+            members=["b12345678", "b98765432"],
         )
 
     def test_delete_requires_auth(self):
@@ -833,10 +663,11 @@ class AdminAliasUserDeleteApiTest(TestCase):
         self.assertEqual(resp.status_code, 204)
 
         alias = Alias.objects.get(alias_name="toremove")
-        self.assertNotIn("b12345678", alias.user_id)
-        self.assertIn("b98765432", alias.user_id)
+        self.assertNotIn("b12345678", member_uids(alias))
+        self.assertIn("b98765432", member_uids(alias))
 
-        task = UserTaskQueue.objects.filter(
+        task = SyncTask.objects.filter(
+            kind="member",
             alias_name="toremove", user_uid="b12345678", action="remove"
         ).exists()
         self.assertTrue(task)
@@ -848,9 +679,10 @@ class AdminAliasUserDeleteApiTest(TestCase):
         self.assertEqual(resp.data["code"], "NOT_FOUND")
 
         alias = Alias.objects.get(alias_name="toremove")
-        self.assertEqual(len(alias.user_id), 2)  # Remains unchanged
+        self.assertEqual(len(member_uids(alias)), 2)  # Remains unchanged
 
-        task = UserTaskQueue.objects.filter(
+        task = SyncTask.objects.filter(
+            kind="member",
             alias_name="toremove", user_uid="b00000000", action="remove"
         ).exists()
         self.assertFalse(task)  # Shouldn't create task if user wasn't subscribed

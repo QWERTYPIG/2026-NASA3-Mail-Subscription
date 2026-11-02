@@ -43,24 +43,24 @@ Compose 的主要服務是 `postgres`、`redis`、`web`、`worker` 與 `frontend
 
 主要資料概念如下：
 
-- `Alias` 保存 alias 名稱、顯示資訊與本地成員快取。
-- `AliasTaskQueue` 保存 alias 建立或刪除工作。
-- `UserTaskQueue` 保存成員加入或移除工作。
+- `Alias` 保存 alias 名稱與顯示資訊。
+- `AliasMember` 保存本地成員快取，一列一個 `(alias, uid)`。
+- `SyncTask` 是 alias 與成員工作共用的單一 queue；`kind` 區分 `alias`／`member`，`id` 即全域順序。
 - LDAP `ou=Aliases` 的 entry 使用 `groupOfUniqueNames` 與 `uniqueMember` 表示實際 alias 成員。
 
 ```mermaid
 flowchart TD
     API[Django API] -->|同一 transaction| CacheDB[(PostgreSQL 本地快取)]
-    API -->|建立 add/remove 工作| AliasQ[AliasTaskQueue]
-    API -->|建立 add/remove 工作| UserQ[UserTaskQueue]
-    AliasQ --> Worker[LDAP 同步 worker]
-    UserQ --> Worker
+    API -->|建立 alias/member 工作| SyncQ[SyncTask]
+    SyncQ --> Worker[LDAP 同步 worker]
     Worker -->|先 alias、後 user| LDAP[LDAP ou=Aliases]
     Worker -->|一致性檢查| LDAP
     LDAP -->|重建完整狀態| CacheDB
 ```
 
-PostgreSQL 本地快取不是 LDAP 的替代品。LDAP 同步 worker 完成佇列工作後再從 LDAP 讀取狀態，將本地快取校正為 LDAP 狀態。兩類工作分開排序，不能推論跨佇列的全域順序。
+PostgreSQL 本地快取不是 LDAP 的替代品。LDAP 同步 worker 完成佇列工作後再從 LDAP 讀取狀態，將本地快取校正為 LDAP 狀態。alias 與成員工作在同一張 `SyncTask` 表，`id` 決定全域順序。
+
+> **過渡狀態**：LDAP 同步 worker（`apps/subscriptions/tasks.py`）尚未改用 `SyncTask`，下方「業務規則」與「背景任務」中的 worker 流程仍描述舊實作；worker 將改為透過 sync interface 依 `id` 處理，完成前此分支不得部署。
 
 ## 主要資料流
 
