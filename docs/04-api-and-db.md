@@ -170,8 +170,8 @@ curl --fail-with-body -sS -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
 
 - LDAP 是 alias/member source of truth；Django API 不直接寫入 `ou=Aliases`。
 - **寫入端**：所有會同步到 LDAP 的變更（alias 建立/刪除、成員新增/移除、使用者訂閱 PUT）都只經過 `apps/subscriptions/writes.py`；views 不直接寫 `alias_member` 或 `sync_task`。每個函式在同一 transaction 內先取 per-alias lock（PostgreSQL `pg_advisory_xact_lock(0x6D61696C, hashtext(alias_name))`，commit 才釋放），再更新 cache、建立 `sync_task`。因此同一 alias 的 `sync_task.id` 順序等於 commit 順序；alias row 尚不存在（建立）時也鎖得住。PUT 一次鎖多個 alias，依 alias name 排序取鎖以避免 deadlock。alias PATCH 只改顯示欄位，不經過此模組。`sync_task` 依 `id` 升冪處理，失敗 row 保留重試；LDAP retry delay 為 `0.5, 1, 2, 4, 8` 秒。
-- **讀取端（sync interface）**：LDAP 同步端只 import `apps/subscriptions/sync.py`，不碰 model。`flush_session()` 依 `id` 逐筆給出 `Task`（只含 session 開啟時已存在的 task），同步端回報 `Outcome`：`DONE`／`OBSOLETE` 移出 queue，`RETRY` 保留並擋下該 alias 本 session 的後續 task；取了未回報視為 `RETRY`。`apply_snapshot({alias: uid 集合})` 逐 alias 在同一把 per-alias lock 內覆蓋 cache，仍有 queued task 的 alias 不覆蓋；不在 snapshot 的 alias 從 cache 刪除，顯示欄位保留。
-- **過渡狀態**：`apps/subscriptions/tasks.py`（LDAP 同步 worker）尚未改用 `sync.py`，仍引用已移除的 `AliasTaskQueue`、`UserTaskQueue` 與 `alias.user_id`，在 port 到 sync interface 前無法執行。此狀態不得部署。
+- **讀取端（sync interface）**：LDAP 同步端只 import `apps/subscriptions/sync.py`，依 `id` 逐筆取 task、回報結果，最後以 LDAP snapshot 在同一把 per-alias lock 內校正 cache；仍有 queued task 的 alias 不覆蓋。完整合約見 [06 同步介面](./06-sync-interface.md)。
+- **過渡狀態**：`apps/subscriptions/tasks.py`（LDAP 同步 worker）尚未改用 `sync.py`，仍引用已移除的 `AliasTaskQueue`、`UserTaskQueue` 與 `alias.user_id`，在 port 到 [sync interface](./06-sync-interface.md) 前無法執行。此狀態不得部署。
 - `PUT /user/subscriptions/` 每 user 以 Redis key `user_subscription_cooldown:<username>` 冷卻 600 秒；throttle 在 validation 前佔用 slot，失敗 request 也可能留下 cooldown。worker schedule 為 30 分鐘，flush lock TTL 為 300 秒；這些都是 duration，不是 API datetime。
 - migration `0001_initial` 建立 `alias`、`alias_task_queue`、`user_task_queue`；`0002_add_flush_ldap_schedule` 建立 `flush_ldap_tasks` 的 30 分鐘 schedule；`0003_sync_task` 以 `sync_task` 取代兩張舊 queue（舊 queue 有資料時拒絕執行，反向時 `sync_task` 有資料亦拒絕）；`0004_alias_member` 把 `alias.user_id` array 搬進 `alias_member` 後刪除該欄位（可反向，依 `id` 重建 array）。部署步驟見 [05 Migration](./05-migration.md)。
 
