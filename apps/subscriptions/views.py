@@ -1,4 +1,3 @@
-from django.db import transaction
 from django.db.models import Exists, OuterRef
 from django.http import Http404
 from rest_framework import generics, status
@@ -8,7 +7,8 @@ from rest_framework.views import APIView
 
 from apps.accounts.permissions import IsAdminUser
 
-from .models import Alias, AliasMember, SyncTask
+from . import writes
+from .models import Alias, AliasMember
 from .serializers import (
     AliasSerializer,
     AliasCreateSerializer,
@@ -52,30 +52,12 @@ class AdminAliasUserListView(APIView):
         uid = serializer.validated_data["uid"]
 
         try:
-            with transaction.atomic():
-                try:
-                    # 使用 select_for_update 避免併發競爭
-                    alias = Alias.objects.select_for_update().get(alias_name=alias_name)
-                except Alias.DoesNotExist:
-                    return not_found_response()
-
-                # 3. 檢查是否已在訂閱名單中，避免重複寫入
-                if AliasMember.objects.filter(alias=alias, user_uid=uid).exists():
-                    # 使用 utils.py 中的 conflict_response 回傳 HTTP 409
-                    return conflict_response(
-                        "該用戶已經存在於此別名中", 
-                        {"uid": uid}
-                    )
-
-                AliasMember.objects.create(alias=alias, user_uid=uid)
-
-                # 4. 寫入 Task Queue 供背景工作同步至 LDAP
-                SyncTask.objects.create(
-                    kind=SyncTask.KIND_MEMBER,
-                    action=SyncTask.ACTION_ADD,
-                    alias_name=alias.alias_name,
-                    user_uid=uid,
-                )
+            writes.add_member(alias_name, uid)
+        except writes.AliasNotFound:
+            return not_found_response()
+        except writes.MemberExists:
+            # 使用 utils.py 中的 conflict_response 回傳 HTTP 409
+            return conflict_response("該用戶已經存在於此別名中", {"uid": uid})
         except Exception:
             return internal_error_response()
 
@@ -92,23 +74,11 @@ class AdminAliasUserDetailView(APIView):
             return validation_error_response({"uid": ["User not found."]})
 
         try:
-            with transaction.atomic():
-                try:
-                    # Select for update to prevent concurrent edits
-                    alias = Alias.objects.select_for_update().get(alias_name=alias_name)
-                except Alias.DoesNotExist:
-                    return not_found_response()
-
-                deleted, _ = AliasMember.objects.filter(alias=alias, user_uid=uid).delete()
-                if not deleted:
-                    return not_found_response("User not found in this alias.")
-
-                SyncTask.objects.create(
-                    kind=SyncTask.KIND_MEMBER,
-                    action=SyncTask.ACTION_REMOVE,
-                    alias_name=alias.alias_name,
-                    user_uid=uid,
-                )
+            writes.remove_member(alias_name, uid)
+        except writes.AliasNotFound:
+            return not_found_response()
+        except writes.MemberNotFound:
+            return not_found_response("User not found in this alias.")
         except Exception:
             return internal_error_response()
 
@@ -132,13 +102,9 @@ class AdminAliasListView(generics.ListCreateAPIView):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         try:
-            with transaction.atomic():
-                instance = serializer.save()
-                SyncTask.objects.create(
-                    kind=SyncTask.KIND_ALIAS,
-                    action=SyncTask.ACTION_ADD,
-                    alias_name=instance.alias_name,
-                )
+            writes.create_alias(**serializer.validated_data)
+        except writes.AliasExists:
+            return conflict_response("Alias name already exists.", {"existing_alias": alias_name})
         except Exception:
             return internal_error_response()
 
@@ -177,26 +143,13 @@ class AdminAliasDetailView(generics.RetrieveUpdateDestroyAPIView):
 
     def destroy(self, request, *args, **kwargs):
         try:
-            instance = self.get_object()
-        except Http404:
+            writes.delete_alias(kwargs[self.lookup_field])
+        except writes.AliasNotFound:
             return not_found_response()
-
-        try:
-            with transaction.atomic():
-                self.perform_destroy(instance)
         except Exception:
             return internal_error_response()
 
         return Response(status=status.HTTP_204_NO_CONTENT)
-
-    def perform_destroy(self, instance):
-        SyncTask.objects.create(
-            kind=SyncTask.KIND_ALIAS,
-            action=SyncTask.ACTION_REMOVE,
-            alias_name=instance.alias_name,
-        )
-        # alias_member rows go with it (ON DELETE CASCADE)
-        instance.delete()
 
 
 class UserSubscriptionListView(APIView):
@@ -221,47 +174,15 @@ class UserSubscriptionListView(APIView):
         serializer = UserSubscriptionUpdateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        desired_map = serializer.validated_data
-        username = request.user.get_username()
-        changed_aliases = []
-        created_task_ids = []
-
-        with transaction.atomic():
-            aliases = Alias.objects.filter(alias_name__in=desired_map.keys())
-            subscribed = set(
-                AliasMember.objects.filter(
-                    user_uid=username, alias__in=aliases
-                ).values_list("alias_id", flat=True)
-            )
-
-            for alias in aliases:
-                desired_is_subscribed = desired_map[alias.alias_name]
-                currently_subscribed = alias.alias_name in subscribed
-
-                if desired_is_subscribed == currently_subscribed:
-                    continue
-
-                action = SyncTask.ACTION_ADD if desired_is_subscribed else SyncTask.ACTION_REMOVE
-                task = SyncTask.objects.create(
-                    kind=SyncTask.KIND_MEMBER,
-                    action=action,
-                    alias_name=alias.alias_name,
-                    user_uid=username,
-                )
-                created_task_ids.append(task.id)
-
-                if desired_is_subscribed:
-                    AliasMember.objects.create(alias=alias, user_uid=username)
-                else:
-                    AliasMember.objects.filter(alias=alias, user_uid=username).delete()
-
-                changed_aliases.append(alias.alias_name)
+        changed_aliases, created_task_ids = writes.set_subscriptions(
+            request.user.get_username(), serializer.validated_data
+        )
 
         return Response(
             {
                 "status": "accepted",
                 "message": "Subscription update accepted.",
-                "changed_aliases": sorted(changed_aliases),
+                "changed_aliases": changed_aliases,
                 "task_ids": created_task_ids,
             },
             status=status.HTTP_202_ACCEPTED,

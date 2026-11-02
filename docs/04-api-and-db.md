@@ -123,7 +123,7 @@
 - **Request/path**：`GET` 無 body。`PUT` 必須送出每個現有 alias 恰好一次的完整 map，key 為 alias name、value 為 JSON boolean；不可缺漏或含未知 alias，例如 `{"activities":true,"workstation":false}`。
 - **Success**：`GET` 為 `200`，依 alias name 排序的陣列，每筆含 `alias_name`、`display_name`、`description`、`is_subscribed`。`PUT` 為 `202`：`{"status":"accepted","message":"Subscription update accepted.","changed_aliases":["activities"],"task_ids":[42]}`。
 - **主要 errors**：permission `403`；PUT validation `400` 為 DRF serializer 格式（通常 `non_field_errors`）；每 user cooldown 內再次 PUT 為 `429`，body 是 DRF 預設格式，未由本專案定義；未預期錯誤可能為 framework `5xx`。
-- **Side effects**：只對實際變更在 transaction 內新增或刪除 `alias_member` row，並建立 `sync_task(kind="member")`；`task_ids` 為 `sync_task.id`；LDAP 非同步同步。
+- **Side effects**：只對實際變更在 transaction 內新增或刪除 `alias_member` row，並建立 `sync_task(kind="member")`；`changed_aliases` 依 alias name 排序，`task_ids` 為對應的 `sync_task.id`（同順序）；PUT 執行期間被刪除的 alias 直接略過；LDAP 非同步同步。
 
 ## Contract examples: session and mutation
 
@@ -168,7 +168,8 @@ curl --fail-with-body -sS -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
 
 ## Runtime behavior
 
-- LDAP 是 alias/member source of truth；Django API 不直接寫入 `ou=Aliases`。`sync_task` 依 `id` 升冪處理，失敗 row 保留重試；LDAP retry delay 為 `0.5, 1, 2, 4, 8` 秒。
+- LDAP 是 alias/member source of truth；Django API 不直接寫入 `ou=Aliases`。
+- **寫入端**：所有會同步到 LDAP 的變更（alias 建立/刪除、成員新增/移除、使用者訂閱 PUT）都只經過 `apps/subscriptions/writes.py`；views 不直接寫 `alias_member` 或 `sync_task`。每個函式在同一 transaction 內先取 per-alias lock（PostgreSQL `pg_advisory_xact_lock(0x6D61696C, hashtext(alias_name))`，commit 才釋放），再更新 cache、建立 `sync_task`。因此同一 alias 的 `sync_task.id` 順序等於 commit 順序；alias row 尚不存在（建立）時也鎖得住。PUT 一次鎖多個 alias，依 alias name 排序取鎖以避免 deadlock。alias PATCH 只改顯示欄位，不經過此模組。`sync_task` 依 `id` 升冪處理，失敗 row 保留重試；LDAP retry delay 為 `0.5, 1, 2, 4, 8` 秒。
 - **過渡狀態**：`apps/subscriptions/tasks.py`（LDAP 同步 worker）尚未改用 `sync_task`／`alias_member`，仍引用已移除的 `AliasTaskQueue`、`UserTaskQueue` 與 `alias.user_id`，在 port 到 sync interface 前無法執行。此狀態不得部署。
 - `PUT /user/subscriptions/` 每 user 以 Redis key `user_subscription_cooldown:<username>` 冷卻 600 秒；throttle 在 validation 前佔用 slot，失敗 request 也可能留下 cooldown。worker schedule 為 30 分鐘，flush lock TTL 為 300 秒；這些都是 duration，不是 API datetime。
 - migration `0001_initial` 建立 `alias`、`alias_task_queue`、`user_task_queue`；`0002_add_flush_ldap_schedule` 建立 `flush_ldap_tasks` 的 30 分鐘 schedule；`0003_sync_task` 以 `sync_task` 取代兩張舊 queue（舊 queue 有資料時拒絕執行，反向時 `sync_task` 有資料亦拒絕）；`0004_alias_member` 把 `alias.user_id` array 搬進 `alias_member` 後刪除該欄位（可反向，依 `id` 重建 array）。部署步驟見 [05 Migration](./05-migration.md)。

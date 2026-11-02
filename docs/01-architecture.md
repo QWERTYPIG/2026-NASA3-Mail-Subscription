@@ -60,6 +60,8 @@ flowchart TD
 
 PostgreSQL 本地快取不是 LDAP 的替代品。LDAP 同步 worker 完成佇列工作後再從 LDAP 讀取狀態，將本地快取校正為 LDAP 狀態。alias 與成員工作在同一張 `SyncTask` 表，`id` 決定全域順序。
 
+API 端所有需要同步到 LDAP 的變更都經過同一組寫入函式（`apps/subscriptions/writes.py`）：同一 transaction 內先鎖住該 alias、再更新快取、再排入 task。鎖持有到 commit，所以同一 alias 的 task `id` 順序就是變更生效的順序。細節見 [04 API and DB](./04-api-and-db.md#runtime-behavior)。
+
 > **過渡狀態**：LDAP 同步 worker（`apps/subscriptions/tasks.py`）尚未改用 `SyncTask`，下方「業務規則」與「背景任務」中的 worker 流程仍描述舊實作；worker 將改為透過 sync interface 依 `id` 處理，完成前此分支不得部署。
 
 ## 主要資料流

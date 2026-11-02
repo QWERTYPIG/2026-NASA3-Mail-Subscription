@@ -239,7 +239,7 @@ class AdminAliasCreateApiTest(TestCase):
         self.assertEqual(resp.status_code, 400)
         self.assertIn("alias_name", resp.data)
 
-    @patch("apps.subscriptions.views.SyncTask.objects.create")
+    @patch("apps.subscriptions.writes.SyncTask.objects.create")
     def test_create_alias_rolls_back_when_queue_insert_fails(self, mock_queue_create):
         """Alias creation and queue insert should be atomic."""
         mock_queue_create.side_effect = Exception("queue insert failed")
@@ -478,7 +478,7 @@ class AdminAliasDeleteApiTest(TestCase):
             ).exists()
         )
 
-    @patch("apps.subscriptions.views.SyncTask.objects.create")
+    @patch("apps.subscriptions.writes.SyncTask.objects.create")
     def test_delete_alias_atomic(self, mock_queue_create):
         mock_queue_create.side_effect = Exception("queue insert failed")
         self.client.force_authenticate(user=self.admin_user)
@@ -619,9 +619,9 @@ class AdminAliasUserAddApiTest(TestCase):
         self.assertEqual(resp.status_code, 404)
         self.assertEqual(resp.data["code"], "NOT_FOUND")
 
-    @patch("apps.subscriptions.views.Alias.objects.select_for_update")
-    def test_internal_error(self, mock_select):
-        mock_select.side_effect = Exception("DB error")
+    @patch("apps.subscriptions.writes._lock_aliases")
+    def test_internal_error(self, mock_lock):
+        mock_lock.side_effect = Exception("DB error")
         self.client.force_authenticate(user=self.admin_user)
         resp = self.client.post(
             "/api/v1/manage/aliases/toadd/users/", {"uid": "b00000000"}, format="json"
@@ -699,9 +699,9 @@ class AdminAliasUserDeleteApiTest(TestCase):
         self.assertEqual(resp.status_code, 404)
         self.assertEqual(resp.data["code"], "NOT_FOUND")
 
-    @patch("apps.subscriptions.views.Alias.objects.select_for_update")
-    def test_internal_error(self, mock_select):
-        mock_select.side_effect = Exception("DB error")
+    @patch("apps.subscriptions.writes._lock_aliases")
+    def test_internal_error(self, mock_lock):
+        mock_lock.side_effect = Exception("DB error")
         self.client.force_authenticate(user=self.admin_user)
         resp = self.client.delete("/api/v1/manage/aliases/toremove/users/b12345678/")
         self.assertEqual(resp.status_code, 500)
