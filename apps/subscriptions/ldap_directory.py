@@ -44,8 +44,23 @@ PEOPLE_DN = f"ou=people,{BASE_DN}"
 CONNECT_TIMEOUT = 10  # seconds to open the connection
 RECEIVE_TIMEOUT = 10  # seconds to wait for each reply
 RETRY_DELAYS = [0.5, 1, 2, 4, 8]  # seconds between attempts of one request
-SNAPSHOT_BUDGET = 60  # seconds; checked before each Snapshot page
+# No retry wait or attempt starts later than this many seconds after apply
+# began. Fast failures still get every wait (15.5 s in all); slow ones stop
+# early, so one Task cannot hold up the Flush for minutes.
+APPLY_DEADLINE = 16
+SNAPSHOT_BUDGET = 60  # seconds; checked before each page and before each retry
 SNAPSHOT_PAGE_SIZE = 500
+
+# Worst cases, in seconds. One attempt on a new connection blocks at most:
+# TCP connect (CONNECT_TIMEOUT), then the TLS handshake, the bind and the
+# request (RECEIVE_TIMEOUT each). This assumes the LDAP URI resolves to one
+# address and each reply arrives within one receive timeout.
+ATTEMPT_WORST = CONNECT_TIMEOUT + 3 * RECEIVE_TIMEOUT  # 40
+# The last attempt starts by the deadline; removing the last Member adds the
+# Placeholder fallback modify to it.
+APPLY_WORST = APPLY_DEADLINE + ATTEMPT_WORST + RECEIVE_TIMEOUT  # 66
+# The last page, or its retry, starts by the Snapshot budget.
+SNAPSHOT_WORST = SNAPSHOT_BUDGET + ATTEMPT_WORST  # 100
 
 _PAGED_RESULTS_OID = "1.2.840.113556.1.4.319"
 # A Member DN is exactly uid=<uid>,ou=people,<base DN> (matched lowercased).
@@ -111,8 +126,9 @@ class LdapDirectory:
 
     def apply(self, task):
         """Write one Task; see the Outcome table in docs/06-sync-interface.md."""
+        deadline = self._clock() + APPLY_DEADLINE
         try:
-            self._request(lambda conn: self._write(conn, task))
+            self._request(lambda conn: self._write(conn, task), deadline)
         except _LDAP_ERRORS as exc:
             return self._classify(task, exc)
         return Outcome.DONE
@@ -122,14 +138,16 @@ class LdapDirectory:
 
     def snapshot(self):
         """Read every Alias under ``ou=Aliases``, page by page; never partial."""
-        started = self._clock()
+        deadline = self._clock() + SNAPSHOT_BUDGET
         snapshot = {}
         cookie = None
         while True:
-            if self._clock() - started > SNAPSHOT_BUDGET:
+            if self._clock() > deadline:
                 self._snapshot_failed(f"Snapshot budget of {SNAPSHOT_BUDGET}s exceeded")
             try:
-                entries, result = self._request(lambda conn: self._search_page(conn, cookie))
+                entries, result = self._request(
+                    lambda conn: self._search_page(conn, cookie), deadline
+                )
             except _LDAP_ERRORS as exc:
                 self._snapshot_failed(str(exc), exc)
             if result.get("result") != 0:
@@ -137,7 +155,8 @@ class LdapDirectory:
             for found in entries:
                 if found.get("type") == "searchResEntry":
                     name, members = self._read_entry(found)
-                    snapshot[name] = members
+                    if name is not None:
+                        snapshot[name] = members
             cookie = _next_cookie(result)
             if not cookie:
                 return snapshot
@@ -158,9 +177,18 @@ class LdapDirectory:
         raise DirectoryUnavailable(error) from cause
 
     def _read_entry(self, found):
+        """Return ``(alias_name, member_uids)``; ``alias_name`` is None if unusable."""
         attributes = found.get("attributes", {})
         cn = attributes.get("cn")
-        name = cn[0] if isinstance(cn, list) else cn
+        name = (cn[0] if cn else None) if isinstance(cn, list) else cn
+        if not name:
+            log_event(
+                logging.WARNING,
+                "alias_entry_skipped",
+                "Alias entry has no cn, skipped",
+                dn=found.get("dn"),
+            )
+            return None, set()
         members = set()
         for member_dn in attributes.get("uniqueMember") or []:
             if member_dn.lower() == self._config.bind_dn.lower():
@@ -204,13 +232,15 @@ class LdapDirectory:
             except _LDAP_ERRORS:
                 pass
 
-    def _request(self, fn):
+    def _request(self, fn, deadline):
         """Return ``fn(connection)``, retrying transient failures.
 
         Connection, server-availability and other non-result errors are
         retried after each of ``RETRY_DELAYS``; other result errors are raised
-        at once. Once the waits run out, a failure meaning LDAP itself cannot
-        be used raises ``DirectoryUnavailable``; anything else is re-raised.
+        at once. No wait (and so no retry) starts if it would end after
+        ``deadline`` (clock seconds). Once retries stop, a failure meaning
+        LDAP itself cannot be used raises ``DirectoryUnavailable``; anything
+        else is re-raised.
         """
         for delay in (*RETRY_DELAYS, None):
             try:
@@ -224,6 +254,14 @@ class LdapDirectory:
                 self._discard_connection()
                 error = exc
             if delay is None:
+                break
+            if self._clock() + delay > deadline:
+                log_event(
+                    logging.WARNING,
+                    "ldap_retry_deadline",
+                    "LDAP error, no time left to retry",
+                    error=str(error),
+                )
                 break
             log_event(
                 logging.WARNING,

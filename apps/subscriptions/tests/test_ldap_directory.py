@@ -64,7 +64,8 @@ class LdapDirectoryTestCase(SimpleTestCase):
         self.Tls = self._patch("Tls")
         self.sleep = self._patch("time.sleep")
         self.conn = self.Connection.return_value
-        self.now = 0.0
+        self.now = 0.0  # the Directory's fake clock; waits advance it
+        self.sleep.side_effect = self.advance
         self.directory = self.make_directory()
 
     def _patch(self, name):
@@ -77,6 +78,26 @@ class LdapDirectoryTestCase(SimpleTestCase):
             uri=URI, bind_dn=BIND_DN, bind_password="secret", ca_cert_file="/etc/ldap/ca.pem"
         )
         return LdapDirectory(replace(config, **overrides), clock=lambda: self.now)
+
+    def advance(self, seconds):
+        self.now += seconds
+
+    def takes(self, seconds, then):
+        """A side effect that spends ``seconds`` of fake time, then returns or raises ``then``."""
+
+        def effect(*args, **kwargs):
+            self.advance(seconds)
+            if isinstance(then, BaseException):
+                raise then
+            return then
+
+        return effect
+
+    @staticmethod
+    def in_turn(*effects):
+        """A side effect running ``effects`` one per call."""
+        remaining = iter(effects)
+        return lambda *args, **kwargs: next(remaining)(*args, **kwargs)
 
     def log_events(self, captured):
         return [json.loads(record.getMessage()) for record in captured.records]
@@ -304,6 +325,63 @@ class RetryTest(LdapDirectoryTestCase):
         self.assertIn("bad dn", final["error"])
 
 
+class ApplyDeadlineTest(LdapDirectoryTestCase):
+    """apply stops retrying 16 s after it started, so one Task is bounded."""
+
+    def test_slow_failures_stop_retrying_at_the_deadline(self):
+        # Each attempt times out after 10 s: attempts start at 0 s and 10.5 s;
+        # a third would start after the 16 s deadline.
+        self.conn.modify.side_effect = self.takes(10, LDAPSocketReceiveError("timed out"))
+
+        with self.assertLogs("mailsub-worker", level="WARNING"):
+            with self.assertRaises(DirectoryUnavailable):
+                self.directory.apply(member_task("add"))
+
+        self.assertEqual(self.conn.modify.call_count, 2)
+        self.assertEqual([c.args[0] for c in self.sleep.call_args_list], [0.5])
+        self.assertEqual(self.now, 20.5)
+
+    def test_slow_other_error_at_the_deadline_is_retry(self):
+        self.conn.delete.side_effect = self.takes(10, LDAPInvalidDnError("bad dn"))
+
+        with self.assertLogs("mailsub-worker", level="WARNING") as captured:
+            outcome = self.directory.apply(alias_task("remove"))
+
+        self.assertIs(outcome, Outcome.RETRY)
+        self.assertEqual(self.conn.delete.call_count, 2)
+        self.assertEqual(self.log_events(captured)[-1]["event"], "alias_task_failed")
+
+    def test_each_apply_gets_its_own_deadline(self):
+        self.now = 1000.0
+        self.conn.modify.side_effect = LDAPSocketReceiveError("reset")
+
+        with self.assertLogs("mailsub-worker", level="WARNING"):
+            with self.assertRaises(DirectoryUnavailable):
+                self.directory.apply(member_task("add"))
+
+        self.assertEqual([c.args[0] for c in self.sleep.call_args_list], RETRY_WAITS)
+
+    def test_worst_case_apply_takes_65_5_seconds(self):
+        # Five fast connection failures use up all waits (15.5 s). The sixth
+        # attempt starts just inside the deadline and takes as long as an
+        # attempt can: connect 10 s, TLS handshake 10 s, bind 10 s, the
+        # remove 10 s and the last-Member fallback modify 10 s.
+        self.Connection.side_effect = self.in_turn(
+            *[self.takes(0, LDAPSocketOpenError("refused"))] * 5,
+            self.takes(30, self.conn),
+        )
+        self.conn.modify.side_effect = self.in_turn(
+            self.takes(10, LDAPObjectClassViolationResult()),
+            self.takes(10, LDAPInsufficientAccessRightsResult()),
+        )
+
+        with self.assertLogs("mailsub-worker", level="WARNING"):
+            outcome = self.directory.apply(member_task("remove"))
+
+        self.assertIs(outcome, Outcome.RETRY)
+        self.assertEqual(self.now, 65.5)
+
+
 PAGED_RESULTS_OID = "1.2.840.113556.1.4.319"
 
 
@@ -325,6 +403,11 @@ def page(entries, cookie=b"", result=0, description="success"):
 
 
 class SnapshotTestCase(LdapDirectoryTestCase):
+    def durations(self, *seconds):
+        """An ``on_search`` hook: each search spends the next of ``seconds``."""
+        remaining = iter(seconds)
+        return lambda: self.advance(next(remaining))
+
     def serve_pages(self, *pages, on_search=None):
         """Make ``conn.search`` return ``pages`` in turn via response/result."""
         replies = iter(pages)
@@ -370,6 +453,22 @@ class SnapshotPagingTest(SnapshotTestCase):
             dict(self.directory.snapshot()), {"placeholder-only": set(), "bare": set()}
         )
 
+    def test_entry_without_cn_is_skipped_with_a_warning(self):
+        dn = f"cn=odd,{ALIASES_DN}"
+        for attributes in ({"uniqueMember": [f"uid=bob,{PEOPLE_DN}"]}, {"cn": []}, {"cn": [""]}):
+            with self.subTest(attributes=attributes):
+                nameless = {"type": "searchResEntry", "dn": dn, "attributes": attributes}
+                self.serve_pages(page([nameless, entry("nasa")]))
+
+                with self.assertLogs("mailsub-worker", level="WARNING") as captured:
+                    snapshot = self.directory.snapshot()
+
+                self.assertEqual(dict(snapshot), {"nasa": set()})
+                [event] = self.log_events(captured)
+                self.assertEqual(event["level"], "WARNING")
+                self.assertEqual(event["event"], "alias_entry_skipped")
+                self.assertEqual(event["dn"], dn)
+
     def test_snapshot_retries_transient_failures(self):
         self.serve_pages(LDAPSocketReceiveError("reset"), page([entry("nasa")]))
 
@@ -396,6 +495,42 @@ class SnapshotFailureTest(SnapshotTestCase):
                 self.directory.snapshot()
 
         self.assertEqual(self.conn.search.call_count, 2)
+
+    def test_page_retries_stop_once_the_snapshot_deadline_passes(self):
+        # Page 1 ends at 55 s. Page 2 fails after 4 s (59 s), is retried at
+        # 59.5 s, fails again at 63.5 s, and the 60 s deadline has passed.
+        self.serve_pages(
+            page([entry("a")], cookie=b"p2"),
+            *[LDAPSocketReceiveError("reset")] * 6,
+            on_search=self.durations(55, 4, 4, 4, 4, 4, 4),
+        )
+
+        with self.assertLogs("mailsub-worker", level="WARNING"):
+            with self.assertRaises(DirectoryUnavailable):
+                self.directory.snapshot()
+
+        self.assertEqual(self.conn.search.call_count, 3)
+        self.assertEqual([c.args[0] for c in self.sleep.call_args_list], [0.5])
+
+    def test_worst_case_snapshot_takes_99_9_seconds(self):
+        # Page 1 ends at 59.4 s; page 2 fails at once and its retry starts at
+        # 59.9 s on a new connection: connect, TLS handshake, bind (30 s),
+        # then the search (10 s).
+        self.serve_pages(
+            page([entry("a")], cookie=b"p2"),
+            LDAPSocketReceiveError("reset"),
+            page([entry("b")]),
+            on_search=self.durations(59.4, 0, 10),
+        )
+        self.Connection.side_effect = self.in_turn(
+            self.takes(0, self.conn), self.takes(30, self.conn)
+        )
+
+        with self.assertLogs("mailsub-worker", level="WARNING"):
+            snapshot = self.directory.snapshot()
+
+        self.assertEqual(dict(snapshot), {"a": set(), "b": set()})
+        self.assertAlmostEqual(self.now, 99.9)
 
     def test_non_success_search_result_raises_directory_unavailable(self):
         self.serve_pages(

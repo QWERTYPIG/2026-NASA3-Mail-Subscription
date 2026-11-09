@@ -8,9 +8,10 @@ import json
 import logging
 from unittest.mock import patch
 
+from django.conf import settings
 from django.test import SimpleTestCase, TestCase
 
-from .. import tasks, writes
+from .. import ldap_directory, sync, tasks, writes
 from ..log import log_event
 from ..models import SyncTask
 from ..sync import Outcome
@@ -44,6 +45,16 @@ class LogEventTest(SimpleTestCase):
         self.assertEqual(payload["ldap_uri"], "ldaps://ldap.example:636")
         self.assertEqual(payload["error"], "timeout")
         self.assertNotIn("empty", payload)
+
+
+    def test_fields_named_in_keep_null_are_emitted_as_null(self):
+        with self.assertLogs(LOGGER, level="INFO") as captured:
+            log_event(logging.INFO, "e", "m", kept=None, dropped=None, keep_null=("kept",))
+
+        [payload] = events(captured)
+        self.assertIsNone(payload["kept"])
+        self.assertNotIn("dropped", payload)
+        self.assertNotIn("keep_null", payload)
 
 
 class ScheduledFlushTest(TestCase):
@@ -98,11 +109,20 @@ class ScheduledFlushTest(TestCase):
         self.assertEqual(summary["obsolete_count"], 1)
         self.assertEqual(summary["stop_reason"], "none")
         self.assertEqual(summary["snapshot_status"], "applied")
-        self.assertEqual(summary["snapshot_updated"], ["a", "c"])
+        self.assertEqual(summary["snapshot_updated"], ["c"])  # "a" already matched
         self.assertEqual(summary["snapshot_skipped"], ["b"])
         self.assertIsInstance(summary["elapsed_seconds"], float)
         self.assertGreaterEqual(summary["oldest_task_age_seconds"], 0)
         self.assertEqual(directory.close_calls, 1)
+
+    def test_summary_has_null_oldest_task_age_when_queue_is_empty(self):
+        writes.create_alias("a")
+
+        _, logged = self.run_flush(FakeDirectory(snapshot={"a": set()}))
+
+        [summary] = [e for e in logged if e["event"] == "flush_summary"]
+        self.assertIn("oldest_task_age_seconds", summary)
+        self.assertIsNone(summary["oldest_task_age_seconds"])
 
     def test_each_obsolete_task_logs_its_own_info_event(self):
         writes.create_alias("c")
@@ -134,5 +154,20 @@ class ScheduledFlushTest(TestCase):
         self.assertEqual([e["event"] for e in logged], ["flush_unexpected_error"])
         self.assertEqual(logged[0]["level"], "ERROR")
         self.assertEqual(logged[0]["error"], "LDAP_CA_CERT_FILE is not set")
+        self.assertTrue(logged[0]["traceback"].startswith("Traceback"))
+        self.assertIn("RuntimeError: LDAP_CA_CERT_FILE is not set", logged[0]["traceback"])
         self.assertEqual(directory.close_calls, 1)
         self.assertEqual(SyncTask.objects.filter(alias_name="a").count(), 1)
+
+
+class DjangoQTimeoutTest(SimpleTestCase):
+    def test_kill_timeout_is_above_the_worst_case_flush(self):
+        # Task budget, then the Task in progress, then the Snapshot.
+        worst_flush = (
+            sync.DEFAULT_TASK_BUDGET + ldap_directory.APPLY_WORST + ldap_directory.SNAPSHOT_WORST
+        )
+        timeout = settings.Q_CLUSTER["timeout"]
+
+        self.assertEqual(worst_flush, 466)
+        self.assertGreaterEqual(timeout - worst_flush, 10)  # room for database work
+        self.assertGreater(settings.Q_CLUSTER["retry"], timeout)

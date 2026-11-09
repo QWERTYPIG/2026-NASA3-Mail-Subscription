@@ -155,7 +155,7 @@ def flush(
     """
     started = clock()
     if not _try_lock():
-        return FlushReport(busy=True, oldest_task_age=_oldest_task_age())
+        return FlushReport(busy=True)
     try:
         report = FlushReport()
         _apply_tasks(directory, report, task_budget, started, clock)
@@ -163,9 +163,15 @@ def flush(
             _take_snapshot(directory, report)
         report.oldest_task_age = _oldest_task_age()
         report.elapsed = clock() - started
-        return report
-    finally:
-        _unlock()
+    except BaseException as exc:
+        # The Flush's own error wins over a failure to release the lock.
+        try:
+            _unlock()
+        except Exception as unlock_exc:
+            exc.add_note(f"releasing the flush lock also failed: {unlock_exc!r}")
+        raise
+    _unlock()
+    return report
 
 
 def _try_lock():
@@ -232,34 +238,43 @@ def _take_snapshot(directory, report):
     snapshot = {name: set(uids) for name, uids in snapshot.items()}
     names = set(snapshot) | set(Alias.objects.values_list("alias_name", flat=True))
     for name in sorted(names):
-        if _correct_alias(name, snapshot.get(name)):
+        correction = _correct_alias(name, snapshot.get(name))
+        if correction is _Correction.UPDATED:
             report.snapshot_updated.append(name)
-        else:
+        elif correction is _Correction.SKIPPED:
             report.snapshot_skipped.append(name)
     report.snapshot_status = SnapshotStatus.APPLIED
+
+
+class _Correction(Enum):
+    UPDATED = "updated"  # the Cache changed to match the Snapshot
+    UNCHANGED = "unchanged"  # the Cache already matched
+    SKIPPED = "skipped"  # the Alias has queued Tasks; nothing changed
 
 
 @transaction.atomic
 def _correct_alias(alias_name, uids):
     """Make one Alias's Cache match the Snapshot; ``uids is None`` = absent.
 
-    Returns False (and changes nothing) if the Alias has queued Tasks.
+    Changes nothing if the Alias has queued Tasks.
     """
     _lock_aliases([alias_name])
     if SyncTask.objects.filter(alias_name=alias_name).exists():
-        return False
+        return _Correction.SKIPPED
 
     if uids is None:
-        Alias.objects.filter(alias_name=alias_name).delete()
-        return True
+        deleted, _ = Alias.objects.filter(alias_name=alias_name).delete()
+        return _Correction.UPDATED if deleted else _Correction.UNCHANGED
 
-    alias, _ = Alias.objects.get_or_create(alias_name=alias_name)
+    alias, created = Alias.objects.get_or_create(alias_name=alias_name)
     current = set(alias.members.values_list("user_uid", flat=True))
+    if not created and current == uids:
+        return _Correction.UNCHANGED
     alias.members.exclude(user_uid__in=uids).delete()
     AliasMember.objects.bulk_create(
         AliasMember(alias=alias, user_uid=uid) for uid in sorted(uids - current)
     )
-    return True
+    return _Correction.UPDATED
 
 
 def _oldest_task_age():

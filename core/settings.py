@@ -120,8 +120,11 @@ Q_CLUSTER = {
     "name": "mail_tasks",
     "workers": 4,
     "recycle": 500,
-    # Kill timeout above the Flush's worst case: connect 10 s + Task budget
-    # 300 s + last Task's retries ~76 s + Snapshot budget 60 s = ~446 s.
+    # Kill timeout above the Flush's worst case (466 s): Task budget 300 s +
+    # the Task in progress 66 s (retries stop 16 s after it started, then one
+    # last attempt on a new connection: connect 10 + TLS handshake 10 + bind
+    # 10 + request 10 + last-Member fallback 10) + Snapshot 100 s (budget
+    # 60 s, then one last attempt of 40 s). See apps/subscriptions/ldap_directory.py.
     "timeout": 480,
     # Re-delivery delay must exceed the kill timeout, or a healthy Flush
     # would be started a second time.
