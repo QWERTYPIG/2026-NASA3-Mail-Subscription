@@ -1,4 +1,4 @@
-"""Tests for the sync_task / alias_member schema (migrations 0003, 0004).
+"""Tests for the sync_task / alias_member schema (migrations 0003-0005).
 
 LDAP is never contacted: the member-add serializer's LDAP lookup is mocked.
 """
@@ -9,12 +9,14 @@ from django.contrib.auth import get_user_model
 from django.db import IntegrityError, connection, transaction
 from django.db.migrations.executor import MigrationExecutor
 from django.test import TestCase, TransactionTestCase
+from django.utils import timezone
 from rest_framework.test import APIClient
 
+from .. import writes
 from ..models import Alias, AliasMember, SyncTask
 
 APP = "subscriptions"
-LATEST = "0004_alias_member"
+LATEST = "0005_sync_task_created_at"
 
 
 def _ldap_user(gid="400"):
@@ -49,6 +51,24 @@ class SyncTaskConstraintTest(TestCase):
             SyncTask.objects.create(kind="member", action="add", alias_name="a", user_uid="y"),
         ]
         self.assertEqual(list(SyncTask.objects.all()), created)
+
+
+class SyncTaskCreatedAtTest(TestCase):
+    """Every Task records when the write path enqueued it."""
+
+    def test_every_write_function_stamps_its_task(self):
+        before = timezone.now()
+        writes.create_alias("a")
+        writes.add_member("a", "b1")
+        writes.remove_member("a", "b1")
+        writes.set_subscriptions("b2", {"a": True})
+        writes.delete_alias("a")
+        after = timezone.now()
+
+        stamps = list(SyncTask.objects.values_list("created_at", flat=True))
+        self.assertEqual(len(stamps), 5)
+        for stamp in stamps:
+            self.assertTrue(before <= stamp <= after, stamp)
 
 
 class AliasMemberConstraintTest(TestCase):
@@ -196,7 +216,7 @@ class AliasMemberMigrationTest(MigrationTestBase):
         OldAlias.objects.create(alias_name="a", user_id=["b2", "b1", "b2"])
         OldAlias.objects.create(alias_name="empty", user_id=[])
 
-        new = self.migrate(LATEST)
+        new = self.migrate("0004_alias_member")
         Member = new.get_model(APP, "AliasMember")
         self.assertEqual(
             list(Member.objects.filter(alias_id="a").order_by("id").values_list("user_uid", flat=True)),
@@ -205,7 +225,7 @@ class AliasMemberMigrationTest(MigrationTestBase):
         self.assertFalse(Member.objects.filter(alias_id="empty").exists())
 
     def test_reverse_rebuilds_arrays(self):
-        new = self.migrate(LATEST)
+        new = self.migrate("0004_alias_member")
         NewAlias = new.get_model(APP, "Alias")
         Member = new.get_model(APP, "AliasMember")
         a = NewAlias.objects.create(alias_name="a")
@@ -217,3 +237,28 @@ class AliasMemberMigrationTest(MigrationTestBase):
         OldAlias = old.get_model(APP, "Alias")
         self.assertEqual(OldAlias.objects.get(alias_name="a").user_id, ["b3", "b1"])
         self.assertEqual(OldAlias.objects.get(alias_name="empty").user_id, [])
+
+
+class SyncTaskCreatedAtMigrationTest(MigrationTestBase):
+    def test_existing_tasks_get_the_migration_time(self):
+        old = self.migrate("0004_alias_member")
+        OldTask = old.get_model(APP, "SyncTask")
+        OldTask.objects.create(kind="alias", action="add", alias_name="a")
+        OldTask.objects.create(kind="member", action="add", alias_name="a", user_uid="b1")
+
+        before = timezone.now()
+        new = self.migrate(LATEST)
+        after = timezone.now()
+
+        stamps = list(new.get_model(APP, "SyncTask").objects.values_list("created_at", flat=True))
+        self.assertEqual(len(stamps), 2)
+        for stamp in stamps:
+            self.assertIsNotNone(stamp)
+            self.assertTrue(before <= stamp <= after, stamp)
+
+    def test_column_rejects_null(self):
+        with self.assertRaises(IntegrityError), transaction.atomic(), connection.cursor() as cur:
+            cur.execute(
+                "INSERT INTO sync_task (kind, action, alias_name, created_at) "
+                "VALUES ('alias', 'add', 'a', NULL)"
+            )

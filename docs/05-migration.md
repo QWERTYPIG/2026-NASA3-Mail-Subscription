@@ -75,7 +75,7 @@ MIGRATION_FILE="/tmp/mailsub-migrations-$(date +%Y%m%d-%H%M%S).txt"
 docker compose -f "$COMPOSE_FILE" exec web python manage.py showmigrations | tee "$MIGRATION_FILE"
 ```
 
-預期建立 Django、Django-Q 與 subscriptions schema；`0002` 建立每 30 分鐘執行 `flush_ldap_tasks` 的 schedule；`0003` 建立 `sync_task` 並刪除兩張舊 queue；`0004` 把 `alias.user_id` 搬進 `alias_member`；`showmigrations` 顯示已套用。migration 不會建立正式 alias fixture，也不會回復 LDAP；初始資料須經既有應用程式流程建立。
+預期建立 Django、Django-Q 與 subscriptions schema；`0002` 建立每 30 分鐘執行 `flush_ldap_tasks` 的 schedule；`0003` 建立 `sync_task` 並刪除兩張舊 queue；`0004` 把 `alias.user_id` 搬進 `alias_member`；`0005` 為 `sync_task` 加上 `created_at`（既有 row 填入 migration 執行時間）；`showmigrations` 顯示已套用。migration 不會建立正式 alias fixture，也不會回復 LDAP；初始資料須經既有應用程式流程建立。
 
 `db_sync.sh` 由 ACTIVE monitor 依 `SYNC_INTERVAL` 觸發：先 `pg_dump`，再對 `DB_REPLICA_HOSTS` 執行 `pg_restore --clean --if-exists`，成功後寫入 `LAST_SYNC_FILE`。它不是 native replication；可用下列命令確認工具與狀態：
 
@@ -198,7 +198,7 @@ curl --fail --retry 30 --retry-delay 2 --retry-connrefused \
 
 1. 記錄 `docker compose ps`、logs、monitor 狀態與 LDAP queue。
 2. 將 build context 固定到已驗證的前一個 commit，或使用事先保存的 image，再執行 `docker compose build` 與 `up -d`。
-3. 若新 migration 不可逆，不可只降版 image；依 migration 專屬方案處理，或在隔離資料庫驗證 backup。`0004_alias_member` 可反向（依 `alias_member.id` 重建 `alias.user_id`）；`0003_sync_task` 只在 `sync_task` 為空時可反向，否則拒絕，需先以新版 worker 清空 queue。
+3. 若新 migration 不可逆，不可只降版 image；依 migration 專屬方案處理，或在隔離資料庫驗證 backup。`0005_sync_task_created_at` 可反向（刪除 `created_at` 欄位）；`0004_alias_member` 可反向（依 `alias_member.id` 重建 `alias.user_id`）；`0003_sync_task` 只在 `sync_task` 為空時可反向，否則拒絕，需先以新版 worker 清空 queue。
 4. 以 `docker compose ps`、`/api/v1/health/`、`/health`、logs 與 queue 驗證；未完成驗證前保持 `FLUSH_ENABLED=0`。
 
 ## 已知限制

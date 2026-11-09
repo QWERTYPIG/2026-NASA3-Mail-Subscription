@@ -162,9 +162,9 @@ curl --fail-with-body -sS -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
 |---|---|---|
 | `alias` | `alias_name varchar(255)`, `display_name varchar(255)`, `description text` | `alias_name` PK/unique/required，regex `^[a-zA-Z0-9-]+$`；其餘非 NULL、default `''`；description API max 500，非 DB constraint。 |
 | `alias_member` | `id bigint`, `alias_name varchar(255)`, `user_uid varchar(255)` | 一列一個成員（3NF）。PK auto-increment，`id` 順序即加入順序；`alias_name` FK → `alias`，`ON DELETE CASCADE`；`UNIQUE(alias_name, user_uid)`；`user_uid` 有 index。 |
-| `sync_task` | `id bigint`, `kind varchar(10)`, `action varchar(10)`, `alias_name varchar(255)`, `user_uid varchar(255) NULL` | alias 與成員共用的單一 LDAP 同步 queue。PK auto-increment，`id` 即兩種 task 的全域處理順序（可能有空號）。`kind` 僅 `alias`/`member`、`action` 僅 `add`/`remove`（DB CHECK）；`kind="alias"` 時 `user_uid` 必須為 NULL，`kind="member"` 時必須有值（DB CHECK）。刻意不設 FK：task 須在 alias row 刪除後仍存在。index `(alias_name, id)`。 |
+| `sync_task` | `id bigint`, `kind varchar(10)`, `action varchar(10)`, `alias_name varchar(255)`, `user_uid varchar(255) NULL`, `created_at timestamptz` | alias 與成員共用的單一 LDAP 同步 queue。PK auto-increment，`id` 即兩種 task 的全域處理順序（可能有空號）。`kind` 僅 `alias`/`member`、`action` 僅 `add`/`remove`（DB CHECK）；`kind="alias"` 時 `user_uid` 必須為 NULL，`kind="member"` 時必須有值（DB CHECK）。刻意不設 FK：task 須在 alias row 刪除後仍存在。`created_at` NOT NULL，寫入端建立 task 時自動填入 enqueue 時間（`writes.py` 函式不需傳入），用來看 task 在 queue 中等了多久；migration `0005` 之前就存在的 row 填入 migration 執行時間。index `(alias_name, id)`。 |
 
-`alias_member` 以 FK、`sync_task` 以字串 `alias_name` 對應 `alias`；無 timestamp。PostgreSQL 儲存 metadata、member cache、queue；Redis 只供 cache、cooldown、flush lock。`TIME_ZONE=UTC`、`USE_TZ=True`，API 目前沒有 date/datetime 欄位。
+`alias_member` 以 FK、`sync_task` 以字串 `alias_name` 對應 `alias`；只有 `sync_task.created_at` 是 timestamp。PostgreSQL 儲存 metadata、member cache、queue；Redis 只供 cache、cooldown、flush lock。`TIME_ZONE=UTC`、`USE_TZ=True`，API 目前沒有 date/datetime 欄位。
 
 ## Runtime behavior
 

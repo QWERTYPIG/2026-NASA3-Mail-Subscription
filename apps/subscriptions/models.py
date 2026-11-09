@@ -83,6 +83,8 @@ class SyncTask(models.Model):
     action = models.CharField(max_length=10, choices=ACTION_CHOICES)
     alias_name = models.CharField(max_length=255, validators=[alias_validator])
     user_uid = models.CharField(max_length=255, null=True, blank=True)
+    # When the write path enqueued the task; shows how long it has waited.
+    created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         db_table = 'sync_task'
