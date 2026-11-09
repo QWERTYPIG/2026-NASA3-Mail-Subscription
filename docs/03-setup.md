@@ -212,7 +212,7 @@ docker compose exec frontend npm run build
 python3 -m unittest scripts/monitor/test_monitor.py
 ```
 
-**Expected result:** Django `check` 沒有 error；Django 全部測試與 `apps.subscriptions` 測試通過（例外：LDAP 同步 worker 改用 `sync_task` 前，`apps.subscriptions.tests.test_tasks` 會因 import 失敗，見 [04 API 與資料庫](./04-api-and-db.md) 的「過渡狀態」）；frontend lint／build 成功；monitor unittest 通過。測試中的 LDAP write 應為 mock；不要為了測試呼叫會 enqueue 或 flush 真實 LDAP 的管理操作。
+**Expected result:** Django `check` 沒有 error；Django 全部測試與 `apps.subscriptions` 測試通過，沒有已知失敗；frontend lint／build 成功；monitor unittest 通過。測試中的 LDAP write 應為 mock；不要為了測試呼叫會 enqueue 或 flush 真實 LDAP 的管理操作。
 
 API health smoke test：
 

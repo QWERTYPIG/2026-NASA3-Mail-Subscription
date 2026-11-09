@@ -120,7 +120,12 @@ Q_CLUSTER = {
     "name": "mail_tasks",
     "workers": 4,
     "recycle": 500,
-    "timeout": 60,
+    # Kill timeout above the Flush's worst case: connect 10 s + Task budget
+    # 300 s + last Task's retries ~76 s + Snapshot budget 60 s = ~446 s.
+    "timeout": 480,
+    # Re-delivery delay must exceed the kill timeout, or a healthy Flush
+    # would be started a second time.
+    "retry": 540,
     "compress": True,
     "save_limit": 250,
     "queue_limit": 500,

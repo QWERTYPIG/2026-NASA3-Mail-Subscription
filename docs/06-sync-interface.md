@@ -120,7 +120,24 @@ class Directory(Protocol):
 - 整個 Flush 使用 Django 的 default 資料庫連線，中途不關閉或更換（flush lock 必須在同一連線上取得與釋放）。
 - sync module 不記 log；需要的資訊都在 flush report 中。
 
+## 排程入口與 log event
+
+`apps/subscriptions/tasks.py` 的 `flush_ldap_tasks`（Django-Q 每 30 分鐘執行）：
+
+1. `FLUSH_ENABLED` 不是 `1`：記 `flush_disabled`，不建立 Directory。
+2. 否則建立 `LdapDirectory()`、呼叫 `sync.flush(directory)`，最後一定呼叫 `directory.close()`。
+3. 依 flush report 記 log（JSON，logger `mailsub-worker`，見 `apps/subscriptions/log.py`）：
+
+| event | level | 何時 | 欄位 |
+|---|---|---|---|
+| `flush_lock_busy` | INFO | report 為 busy | - |
+| `task_obsolete` | INFO | 每個 `OBSOLETE` Task 一筆 | `task_id`、`kind`、`action`、`alias_name`、`user_uid` |
+| `flush_summary` | INFO | 每次非 busy 的 Flush 一筆 | `done_count`、`retry_count`、`obsolete_count`、`stop_reason`、`snapshot_status`、`snapshot_updated`、`snapshot_skipped`、`elapsed_seconds`、`oldest_task_age_seconds`（Queue 為空時省略） |
+| `flush_unexpected_error` | ERROR | 建立 Directory、Flush 或記 log 時發生非預期例外（例如未設定 `LDAP_CA_CERT_FILE`） | `error` |
+
+每個 `RETRY` Task 由 LDAP Directory 在判定時記一筆 `alias_task_failed`／`user_task_failed`（ERROR，含 `task_id`、`alias_name`、`user_uid` 與 LDAP `error`）；排程入口不重複記錄。LDAP 細節 event（`ldap_retry`、`ldap_connect_failed`、`ldap_unavailable`、`member_dn_skipped` 等）也由 LDAP Directory 記錄。
+
 ## 測試
 
-- `apps/subscriptions/tests/fakes.py` 的 `FakeDirectory` 是共用的 in-memory Directory：記錄 `apply` 過的 Task（`applied`）、依 Task `id` 或 Alias 名稱回傳指定的 Outcome 或丟出指定例外、回傳指定的 Snapshot 或丟出例外（`snapshot_calls` 記錄呼叫次數），並可用 `on_apply` 在 Flush 中途插入動作（例如新增 Task 或推進假時鐘）。
-- 測試使用 Django test DB，以 `apps/subscriptions/writes.py` 的函式（例如 `writes.create_alias`、`writes.add_member`）建立資料，與 API 產生 Task 的方式相同。不 mock、不連 LDAP。範例見 `apps/subscriptions/tests/test_sync.py`。
+- `apps/subscriptions/tests/fakes.py` 的 `FakeDirectory` 是共用的 in-memory Directory：記錄 `apply` 過的 Task（`applied`）、依 Task `id` 或 Alias 名稱回傳指定的 Outcome 或丟出指定例外、回傳指定的 Snapshot 或丟出例外（`snapshot_calls` 記錄呼叫次數）、記錄 `close()` 次數（`close_calls`），並可用 `on_apply` 在 Flush 中途插入動作（例如新增 Task 或推進假時鐘）。
+- 測試使用 Django test DB，以 `apps/subscriptions/writes.py` 的函式（例如 `writes.create_alias`、`writes.add_member`）建立資料，與 API 產生 Task 的方式相同。不 mock、不連 LDAP。範例見 `apps/subscriptions/tests/test_sync.py`；排程入口的測試（`test_tasks.py`）以 `FakeDirectory` 取代 `LdapDirectory` constructor。

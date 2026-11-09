@@ -22,7 +22,8 @@ class FakeDirectory:
       e.g. to enqueue more Tasks or advance a fake clock mid-Flush.
 
     After a Flush, ``applied`` lists every Task handed to ``apply`` in order,
-    and ``snapshot_calls`` counts calls to ``snapshot()``.
+    ``snapshot_calls`` counts calls to ``snapshot()`` and ``close_calls``
+    counts calls to ``close()``.
     """
 
     def __init__(self, *, outcomes=None, default=Outcome.DONE, snapshot=None, on_apply=None):
@@ -32,6 +33,7 @@ class FakeDirectory:
         self.on_apply = on_apply
         self.applied = []
         self.snapshot_calls = 0
+        self.close_calls = 0
 
     def apply(self, task):
         self.applied.append(task)
@@ -47,3 +49,6 @@ class FakeDirectory:
         if isinstance(self.snapshot_result, BaseException):
             raise self.snapshot_result
         return {name: set(uids) for name, uids in self.snapshot_result.items()}
+
+    def close(self):
+        self.close_calls += 1

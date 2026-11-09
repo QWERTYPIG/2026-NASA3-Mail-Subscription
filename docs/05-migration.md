@@ -62,7 +62,7 @@ docker compose -f "$COMPOSE_FILE" exec web python -m unittest scripts/monitor/te
 3. 若有 task 持續失敗而無法清空，停止升級並人工判斷；不要直接刪除 queue row。
 4. 停止 `worker`，部署新版後再執行下方 `migrate`。
 
-此 migration 需要 LDAP 同步 worker 已改用 `sync_task`（透過 [06 同步介面](./06-sync-interface.md)；見 [04 API 與資料庫](./04-api-and-db.md) 的「過渡狀態」），完成前不得部署。
+新版 LDAP 同步 worker 只讀 `sync_task`（見 [06 同步介面](./06-sync-interface.md)），舊 queue 中未清空的 task 不會被處理，因此必須先完成上述清空步驟。
 
 ### 執行 migrate
 
