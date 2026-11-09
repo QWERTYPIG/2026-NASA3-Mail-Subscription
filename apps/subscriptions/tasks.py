@@ -1,11 +1,8 @@
-import json
 import logging
 import os
-import ssl
-import time
 
 from django.core.cache import cache
-from ldap3 import LEVEL, MODIFY_ADD, MODIFY_DELETE, Connection, Server, Tls
+from ldap3 import LEVEL, MODIFY_ADD, MODIFY_DELETE, Connection
 from ldap3.core.exceptions import (
     LDAPAttributeOrValueExistsResult,
     LDAPEntryAlreadyExistsResult,
@@ -13,98 +10,9 @@ from ldap3.core.exceptions import (
     LDAPNoSuchAttributeResult,
 )
 
+from .ldap_directory import ALIASES_DN, PEOPLE_DN, LdapConfig, connect
+from .log import log_event
 from .models import Alias, AliasTaskQueue, UserTaskQueue
-
-LOGGER_NAME = "mailsub-worker"
-logger = logging.getLogger(LOGGER_NAME)
-
-
-def log_event(level: int, event: str, message: str, **fields: object) -> None:
-    """Emit one JSON log event for journal, rsyslog, and Loki ingestion."""
-    payload: dict[str, object] = {
-        "level": logging.getLevelName(level),
-        "logger": LOGGER_NAME,
-        "event": event,
-        "message": message,
-    }
-    payload.update({key: value for key, value in fields.items() if value is not None})
-    logger.log(level, json.dumps(payload, sort_keys=True, default=str))
-
-# ---------------------------------------------------------------------------
-# LDAP constants
-# ---------------------------------------------------------------------------
-
-LDAP_URI = os.environ.get("LDAP_URI", "ldaps://172.16.127.109:636")
-LDAP_BIND_DN = os.environ.get(
-    "LDAP_BIND_DN",
-    "uid=mailtest,ou=people,dc=csie,dc=ntu,dc=edu,dc=tw",
-)
-LDAP_BIND_PASSWORD = os.environ.get("LDAP_BIND_PASSWORD", "")
-LDAP_CA_CERT_FILE = os.environ.get("LDAP_CA_CERT_FILE", "")
-
-BASE_DN = "dc=csie,dc=ntu,dc=edu,dc=tw"
-ALIASES_DN = f"ou=Aliases,{BASE_DN}"
-PEOPLE_DN = f"ou=people,{BASE_DN}"
-
-# ---------------------------------------------------------------------------
-# Retry
-# ---------------------------------------------------------------------------
-
-RETRY_DELAYS = [0.5, 1, 2, 4, 8]  # seconds between attempts
-
-
-def _with_retry(fn, *args, **kwargs):
-    """Call fn(*args, **kwargs), retrying on LDAPException with exponential backoff.
-
-    Raises the last LDAPException if all retries are exhausted.
-    """
-    for delay in RETRY_DELAYS:
-        try:
-            return fn(*args, **kwargs)
-        except LDAPException as exc:
-            log_event(
-                logging.WARNING,
-                "ldap_retry",
-                "LDAP error, retrying",
-                delay_seconds=delay,
-                error=str(exc),
-            )
-            time.sleep(delay)
-    # Final attempt — no sleep afterwards
-    return fn(*args, **kwargs)
-
-
-# ---------------------------------------------------------------------------
-# LDAP connection
-# ---------------------------------------------------------------------------
-
-def _connect() -> Connection:
-    if not LDAP_CA_CERT_FILE:
-        raise RuntimeError(
-            "LDAP_CA_CERT_FILE is not set — refusing to connect without certificate validation"
-        )
-    tls = Tls(ca_certs_file=LDAP_CA_CERT_FILE, validate=ssl.CERT_REQUIRED)
-    server = Server(LDAP_URI, use_ssl=True, tls=tls, connect_timeout=10)
-    try:
-        conn = Connection(
-            server,
-            user=LDAP_BIND_DN,
-            password=LDAP_BIND_PASSWORD,
-            auto_bind=True,
-            raise_exceptions=True,
-        )
-    except LDAPException as exc:
-        log_event(
-            logging.ERROR,
-            "ldap_connect_failed",
-            "failed to connect to LDAP",
-            ldap_uri=LDAP_URI,
-            bind_dn=LDAP_BIND_DN,
-            error=str(exc),
-        )
-        raise
-    return conn
-
 
 # ---------------------------------------------------------------------------
 # Flush helpers
@@ -131,13 +39,12 @@ def flush_alias_tasks(conn: Connection) -> None:
                 # Use the bind DN as a placeholder; consistency check will
                 # correct the member list after the first real subscription.
                 try:
-                    _with_retry(
-                        conn.add,
+                    conn.add(
                         dn,
                         object_class=["groupOfUniqueNames"],
                         attributes={
                             "cn": task.alias_name,
-                            "uniqueMember": [LDAP_BIND_DN],
+                            "uniqueMember": [conn.user],
                         },
                     )
                 except LDAPEntryAlreadyExistsResult:
@@ -151,7 +58,7 @@ def flush_alias_tasks(conn: Connection) -> None:
                     )
 
             elif task.action == "remove":
-                _with_retry(conn.delete, dn)
+                conn.delete(dn)
                 # Remove dangling user tasks for this alias (race condition guard)
                 UserTaskQueue.objects.filter(alias_name=task.alias_name).delete()
 
@@ -190,9 +97,7 @@ def flush_user_tasks(conn: Connection) -> None:
         try:
             if task.action == "add":
                 try:
-                    _with_retry(
-                        conn.modify, dn, {"uniqueMember": [(MODIFY_ADD, [member])]}
-                    )
+                    conn.modify(dn, {"uniqueMember": [(MODIFY_ADD, [member])]})
                 except LDAPAttributeOrValueExistsResult:
                     log_event(
                         logging.INFO,
@@ -203,9 +108,7 @@ def flush_user_tasks(conn: Connection) -> None:
                     )
             elif task.action == "remove":
                 try:
-                    _with_retry(
-                        conn.modify, dn, {"uniqueMember": [(MODIFY_DELETE, [member])]}
-                    )
+                    conn.modify(dn, {"uniqueMember": [(MODIFY_DELETE, [member])]})
                 except LDAPNoSuchAttributeResult:
                     log_event(
                         logging.INFO,
@@ -264,7 +167,7 @@ def run_consistency_check(conn: Connection) -> None:
             for member_dn in raw_members:
                 # Full DN format: uid=<uid>,ou=people,...
                 # Skip the placeholder bind DN used when an alias has no real members.
-                if member_dn == LDAP_BIND_DN:
+                if member_dn == conn.user:
                     continue
                 if member_dn.startswith("uid="):
                     uid = member_dn.split(",")[0][len("uid=") :]
@@ -318,7 +221,7 @@ def flush_ldap_tasks() -> None:
         return
 
     try:
-        conn = _connect()
+        conn = connect(LdapConfig.from_env())
         try:
             flush_alias_tasks(conn)
             flush_user_tasks(conn)
