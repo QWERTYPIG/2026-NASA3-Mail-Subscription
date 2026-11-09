@@ -60,7 +60,7 @@
 | 設定、啟動或驗證服務 | [03 建置與啟動](./docs/03-setup.md) | environment variable、本機 Compose、LDAP 設定、HA 與驗證步驟 |
 | 查詢 API 或 database table 行為 | [04 API 與資料庫](./docs/04-api-and-db.md) | API、data model、permission、queue 與實際 response 規格 |
 | 執行部署、migration 或維運操作 | [05 Migration](./docs/05-migration.md) | migration、部署差異、sync、backup 與營運限制 |
-| 修改 LDAP 同步端或 task queue 合約 | [06 同步介面](./docs/06-sync-interface.md) | `tasks.py` 與 `sync.py` 之間的格式、呼叫流程與保證 |
+| 修改 LDAP 同步端或 task queue 合約 | [06 同步介面](./docs/06-sync-interface.md) | `sync.flush` 與 Directory 之間的格式、flush report 與保證 |
 
 ## Quick Start
 

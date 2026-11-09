@@ -1,50 +1,67 @@
-"""Sync interface: the only thing the LDAP sync side (``tasks.py``) imports.
+"""The sync module: runs a whole Flush of the Queue against a Directory.
 
-The sync side never touches models or tables. It sees three formats:
+One call does everything::
 
-- ``Task``: one queued change, read-only.
-- ``Outcome``: what happened to a task in LDAP.
-- Snapshot: ``{alias_name: set_of_uids}`` for every alias in LDAP (uids, not
-  DNs; no placeholder member).
+    report = sync.flush(directory)
 
-Call flow::
-
-    with sync.flush_session() as session:
-        while (task := session.next_task()) is not None:
-            ...apply task to LDAP...
-            session.report(task, sync.Outcome.DONE)
-        session.apply_snapshot(read_ldap_snapshot())
+``directory`` is anything implementing the ``Directory`` protocol (in
+production, the LDAP Directory). The Directory sees only ``Task`` and returns
+``Outcome``; it never touches models or tables. This module owns the Queue
+and the Cache, and does no logging: everything worth logging is in the
+returned ``FlushReport``.
 
 Guarantees:
 
-- Tasks come out in ``id`` order. Within one alias, that is the order the
-  API writes committed.
-- After an alias's task is reported ``RETRY``, the session gives out no more
-  tasks for that alias. Other aliases continue.
-- ``DONE`` and ``OBSOLETE`` tasks leave the queue. ``RETRY`` tasks stay and
-  are retried in the same position next session.
-- A task fetched but not reported counts as ``RETRY`` (when the next task is
-  fetched, or when the session ends).
-- A session only gives out tasks that existed when it opened, so it always
-  ends.
-- ``apply_snapshot`` does not overwrite the cache for an alias that still has
-  queued tasks. Each alias is checked and written under the same per-alias
-  lock the API writes take, so an API write cannot slip in between.
+- Only one Flush runs at a time per database: a PostgreSQL session advisory
+  lock. If it is held, ``flush`` returns a busy report without calling the
+  Directory. The lock is released when ``flush`` returns or raises.
+- Only Tasks that existed when the Flush started are handed out, so a Flush
+  always ends.
+- Tasks are handed out lowest id first, across Alias and Member Tasks alike.
+  A Task that committed late with a lower id is still applied before later
+  Tasks of the same Alias.
+- ``DONE`` and ``OBSOLETE`` remove the Task from the Queue. ``RETRY`` keeps it
+  and blocks its Alias for the rest of the Flush; other Aliases continue.
+- The Task budget is checked before each Task is handed out. Once it has
+  elapsed, the Task in progress has already finished and the rest stay
+  queued. The Snapshot is still taken.
+- ``DirectoryUnavailable`` from ``apply`` keeps the Task queued, stops the
+  Flush and skips the Snapshot.
+- The Snapshot corrects the Cache one Alias at a time, under the same
+  per-Alias lock the write path takes. Aliases that still have queued Tasks
+  are skipped. Display fields are never changed. ``DirectoryUnavailable``
+  from ``snapshot`` leaves the Cache untouched.
+- Any other exception propagates after the lock is released; the Task in
+  progress stays queued.
+- The whole Flush runs on Django's default database connection.
 """
 
-from contextlib import contextmanager
-from dataclasses import dataclass
+import time
+from collections.abc import Mapping, Set
+from dataclasses import dataclass, field
 from enum import Enum
+from typing import Protocol
 
-from django.db import transaction
-from django.db.models import Max
+from django.db import connection, transaction
+from django.db.models import Max, Min
+from django.utils import timezone
 
 from .models import Alias, AliasMember, SyncTask
 from .writes import _lock_aliases
 
+# Two-key advisory lock for the Flush. The first key differs from the
+# per-Alias write lock's namespace (writes.ALIAS_LOCK_NAMESPACE), so the two
+# can never collide. ASCII "flsh".
+FLUSH_LOCK_NAMESPACE = 0x666C7368
+FLUSH_LOCK_KEY = 0
+
+DEFAULT_TASK_BUDGET = 300  # seconds
+
 
 @dataclass(frozen=True)
 class Task:
+    """One queued change, read-only."""
+
     id: int
     kind: str  # "alias" | "member"
     action: str  # "add" | "remove"
@@ -58,115 +75,164 @@ class Task:
 
 
 class Outcome(str, Enum):
-    DONE = "done"  # LDAP is in the intended state
-    RETRY = "retry"  # temporary failure; try again next session
-    OBSOLETE = "obsolete"  # the task no longer makes sense; drop it
+    DONE = "done"  # the Directory is in the intended state (including "already was")
+    RETRY = "retry"  # failed; try again next Flush
+    OBSOLETE = "obsolete"  # no longer meaningful, e.g. its Alias is gone
 
 
-@dataclass(frozen=True)
-class SnapshotResult:
-    updated: list[str]  # aliases whose cache now matches the snapshot
-    skipped: list[str]  # aliases left alone because tasks are still queued
+# Every Alias in the Directory mapped to its Member uids (no Placeholder
+# member). Aliases without Members map to an empty set.
+Snapshot = Mapping[str, Set[str]]
 
 
-class SessionError(Exception):
-    """Interface misuse, e.g. reporting a task that is not outstanding."""
+class DirectoryUnavailable(Exception):
+    """The Directory itself cannot be used right now (e.g. LDAP is down)."""
 
 
-class FlushSession:
-    """One pass over the queue. Get it from ``flush_session()``."""
+class Directory(Protocol):
+    def apply(self, task: Task) -> Outcome:
+        """Write one Task and return its Outcome.
 
-    def __init__(self):
-        self._max_id = SyncTask.objects.aggregate(m=Max("id"))["m"] or 0
-        self._blocked = set()  # aliases that hit RETRY this session
-        self._outstanding = None  # task given out, not yet reported
-        self._closed = False
+        Raises ``DirectoryUnavailable`` if the Directory cannot be used.
+        """
 
-    def next_task(self):
-        """Return the next ``Task``, or ``None`` when the session is done."""
-        self._check_open()
-        self._retry_outstanding()
-        # No cursor: always take the lowest remaining id. A task whose
-        # transaction committed late (lower id, seen later) is still given
-        # out before any later task of the same alias.
+    def snapshot(self) -> Snapshot:
+        """Return a complete Snapshot, never a partial one.
+
+        Raises ``DirectoryUnavailable`` if a complete Snapshot cannot be read.
+        """
+
+
+class StopReason(str, Enum):
+    NONE = "none"  # every Task the Flush could hand out was handed out
+    BUDGET = "budget"
+    DIRECTORY_UNAVAILABLE = "directory_unavailable"
+
+
+class SnapshotStatus(str, Enum):
+    APPLIED = "applied"
+    FAILED = "failed"  # snapshot() raised DirectoryUnavailable; Cache untouched
+    NOT_TAKEN = "not_taken"  # busy, or the Directory was unavailable during apply
+
+
+@dataclass
+class FlushReport:
+    busy: bool = False  # the flush lock was held elsewhere; nothing ran
+    done_count: int = 0
+    retried: list[Task] = field(default_factory=list)
+    obsoleted: list[Task] = field(default_factory=list)
+    stop_reason: StopReason = StopReason.NONE
+    snapshot_status: SnapshotStatus = SnapshotStatus.NOT_TAKEN
+    snapshot_updated: list[str] = field(default_factory=list)  # Alias names
+    snapshot_skipped: list[str] = field(default_factory=list)  # Alias names
+    elapsed: float = 0.0  # seconds
+    oldest_task_age: float | None = None  # seconds; None if the Queue is empty
+
+    @property
+    def retry_count(self):
+        return len(self.retried)
+
+    @property
+    def obsolete_count(self):
+        return len(self.obsoleted)
+
+
+def flush(directory, *, task_budget=DEFAULT_TASK_BUDGET, clock=time.monotonic):
+    """Run one Flush against ``directory`` and return a ``FlushReport``.
+
+    ``task_budget`` (seconds) and ``clock`` (monotonic seconds) are for tests.
+    """
+    started = clock()
+    if not _try_lock():
+        return FlushReport(busy=True, oldest_task_age=_oldest_task_age())
+    try:
+        report = FlushReport()
+        _apply_tasks(directory, report, task_budget, started, clock)
+        if report.stop_reason is not StopReason.DIRECTORY_UNAVAILABLE:
+            _take_snapshot(directory, report)
+        report.oldest_task_age = _oldest_task_age()
+        report.elapsed = clock() - started
+        return report
+    finally:
+        _unlock()
+
+
+def _try_lock():
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT pg_try_advisory_lock(%s, %s)", [FLUSH_LOCK_NAMESPACE, FLUSH_LOCK_KEY]
+        )
+        return cursor.fetchone()[0]
+
+
+def _unlock():
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT pg_advisory_unlock(%s, %s)", [FLUSH_LOCK_NAMESPACE, FLUSH_LOCK_KEY]
+        )
+
+
+def _apply_tasks(directory, report, task_budget, started, clock):
+    max_id = SyncTask.objects.aggregate(m=Max("id"))["m"] or 0
+    blocked = set()  # Aliases that got RETRY in this Flush
+    while True:
+        # No cursor: always take the lowest remaining id, so a Task that
+        # committed late with a lower id is not skipped.
         row = (
-            SyncTask.objects.filter(id__lte=self._max_id)
-            .exclude(alias_name__in=self._blocked)
+            SyncTask.objects.filter(id__lte=max_id)
+            .exclude(alias_name__in=blocked)
             .order_by("id")
             .first()
         )
         if row is None:
-            return None
-        self._outstanding = Task(
+            return
+        if clock() - started >= task_budget:
+            report.stop_reason = StopReason.BUDGET
+            return
+        task = Task(
             id=row.id,
             kind=row.kind,
             action=row.action,
             alias_name=row.alias_name,
             user_uid=row.user_uid,
         )
-        return self._outstanding
-
-    def report(self, task, outcome):
-        """Report the outcome of the task last returned by ``next_task``."""
-        self._check_open()
-        if self._outstanding is None or task.id != self._outstanding.id:
-            raise SessionError(f"task {task.id} is not the outstanding task")
-        outcome = Outcome(outcome)
+        try:
+            outcome = Outcome(directory.apply(task))
+        except DirectoryUnavailable:
+            report.stop_reason = StopReason.DIRECTORY_UNAVAILABLE
+            return
         if outcome is Outcome.RETRY:
-            self._blocked.add(task.alias_name)
+            blocked.add(task.alias_name)
+            report.retried.append(task)
+            continue
+        SyncTask.objects.filter(id=task.id).delete()
+        if outcome is Outcome.OBSOLETE:
+            report.obsoleted.append(task)
         else:
-            SyncTask.objects.filter(id=task.id).delete()
-        self._outstanding = None
-
-    def apply_snapshot(self, snapshot):
-        """Make the cache match LDAP for every alias without queued tasks.
-
-        ``snapshot`` maps every alias in LDAP to its set of member uids.
-        Aliases in the cache but missing from the snapshot are deleted.
-        Returns a ``SnapshotResult``.
-        """
-        self._check_open()
-        self._retry_outstanding()
-        snapshot = {name: set(uids) for name, uids in snapshot.items()}
-        names = set(snapshot) | set(Alias.objects.values_list("alias_name", flat=True))
-
-        updated, skipped = [], []
-        for name in sorted(names):
-            if _apply_one(name, snapshot.get(name)):
-                updated.append(name)
-            else:
-                skipped.append(name)
-        return SnapshotResult(updated=updated, skipped=skipped)
-
-    def _retry_outstanding(self):
-        if self._outstanding is not None:
-            self._blocked.add(self._outstanding.alias_name)
-            self._outstanding = None
-
-    def _check_open(self):
-        if self._closed:
-            raise SessionError("session is closed")
-
-    def _close(self):
-        self._retry_outstanding()
-        self._closed = True
+            report.done_count += 1
 
 
-@contextmanager
-def flush_session():
-    """Open a flush session. Unreported tasks count as ``RETRY`` on exit."""
-    session = FlushSession()
+def _take_snapshot(directory, report):
     try:
-        yield session
-    finally:
-        session._close()
+        snapshot = directory.snapshot()
+    except DirectoryUnavailable:
+        report.snapshot_status = SnapshotStatus.FAILED
+        return
+    snapshot = {name: set(uids) for name, uids in snapshot.items()}
+    names = set(snapshot) | set(Alias.objects.values_list("alias_name", flat=True))
+    for name in sorted(names):
+        if _correct_alias(name, snapshot.get(name)):
+            report.snapshot_updated.append(name)
+        else:
+            report.snapshot_skipped.append(name)
+    report.snapshot_status = SnapshotStatus.APPLIED
 
 
 @transaction.atomic
-def _apply_one(alias_name, uids):
-    """Overwrite one alias's cache from LDAP; ``uids is None`` = not in LDAP.
+def _correct_alias(alias_name, uids):
+    """Make one Alias's Cache match the Snapshot; ``uids is None`` = absent.
 
-    Returns False (and changes nothing) if the alias has queued tasks.
+    Returns False (and changes nothing) if the Alias has queued Tasks.
     """
     _lock_aliases([alias_name])
     if SyncTask.objects.filter(alias_name=alias_name).exists():
@@ -183,3 +249,10 @@ def _apply_one(alias_name, uids):
         AliasMember(alias=alias, user_uid=uid) for uid in sorted(uids - current)
     )
     return True
+
+
+def _oldest_task_age():
+    oldest = SyncTask.objects.aggregate(t=Min("created_at"))["t"]
+    if oldest is None:
+        return None
+    return (timezone.now() - oldest).total_seconds()
