@@ -112,18 +112,24 @@ class UserSubscriptionUpdateSerializer(serializers.Serializer):
 
         return attrs
 
-class AddAliasMemberSerializer(serializers.Serializer):
-    """Validate UID format and existence in LDAP before adding."""
+class MemberUidSerializer(serializers.Serializer):
+    """Validate and normalize a Member uid: trimmed, lowercase, alphanumeric, at most 50 characters."""
     uid = serializers.CharField(max_length=50)
 
     def validate_uid(self, value):
         uid = value.strip().lower()
-        
-        # 1. Basic format validation (matching the frontend rules)
         if not uid.isalnum():
             raise serializers.ValidationError("UID 格式錯誤，僅允許英數字。")
+        return uid
 
-        # 2. LDAP Synchronous Verification
+
+class AddAliasMemberSerializer(MemberUidSerializer):
+    """Validate UID format and existence in LDAP before adding."""
+
+    def validate_uid(self, value):
+        uid = super().validate_uid(value)
+
+        # LDAP synchronous verification
         # Leverage your existing AUTH_LDAP_USER_SEARCH settings to query the server
         ldap_backend = LDAPBackend()
         ldap_user = ldap_backend.populate_user(uid)
