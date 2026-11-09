@@ -26,7 +26,7 @@ flowchart LR
 
 | 名稱 | 說明 |
 |---|---|
-| `flush(directory, *, task_budget=300, clock=time.monotonic)` | 執行一次 Flush，回傳 `FlushReport`。`task_budget`（秒）與 `clock` 只給測試用 |
+| `flush(directory: Directory, *, task_budget=300, clock=time.monotonic) -> FlushReport` | 執行一次 Flush，回傳 `FlushReport`。`task_budget`（秒）與 `clock` 只給測試用 |
 | `Directory` | protocol：`apply(task) -> Outcome`、`snapshot() -> Snapshot` |
 | `DirectoryUnavailable` | Directory 本身無法使用時（LDAP 連不上、過載）由 `apply` 或 `snapshot` 丟出 |
 | `Task` | 一筆待寫入的變更（唯讀） |
@@ -88,22 +88,24 @@ class Directory(Protocol):
 3. **逐筆給出**：每次取剩餘 Task 中最小的 `id`（排除本次已 blocked 的 Alias），呼叫 `directory.apply(task)`。
 4. 給出每筆 Task 前檢查 **Task budget**（預設 300 秒）；用完就停止給出，其餘 Task 原封不動留在 Queue。
 5. **Snapshot**：除非 `apply` 丟過 `DirectoryUnavailable`，否則呼叫 `directory.snapshot()`（budget 用完也照常進行），逐一校正每個出現在 Snapshot 或 Cache 中的 Alias。
-6. 釋放 flush lock，回傳 `FlushReport`。
+6. 釋放 flush lock，回傳 `FlushReport`。若釋放 lock 時又出錯，而 Flush 已有例外在往外丟，原本的例外優先，釋放失敗只附在它的 note（`__notes__`）中。
 
 ## Flush report（`FlushReport`）
 
 | 欄位 | 型別 | 說明 |
 |---|---|---|
-| `busy` | `bool` | flush lock 被其他連線持有，本次什麼都沒做 |
-| `done_count` | `int` | `DONE` 的 Task 數 |
+| `busy` | `bool` | flush lock 被其他連線持有，本次什麼都沒做（只執行取 lock 的那一個查詢） |
+| `done` / `done_count` | `list[Task]` / `int` | `DONE` 的 Task 與數量 |
 | `retried` / `retry_count` | `list[Task]` / `int` | `RETRY` 的 Task（Alias、kind、action、uid）與數量 |
 | `obsoleted` / `obsolete_count` | `list[Task]` / `int` | `OBSOLETE` 的 Task 與數量 |
 | `stop_reason` | `StopReason` | `NONE`（`"none"`）、`BUDGET`（`"budget"`）、`DIRECTORY_UNAVAILABLE`（`"directory_unavailable"`） |
 | `snapshot_status` | `SnapshotStatus` | `APPLIED`（`"applied"`）、`FAILED`（`"failed"`，`snapshot()` 丟 `DirectoryUnavailable`）、`NOT_TAKEN`（`"not_taken"`，busy 或 `apply` 時 Directory 無法使用） |
-| `snapshot_updated` | `list[str]` | Snapshot 校正過的 Alias 名稱（依名稱排序） |
+| `snapshot_updated` | `list[str]` | Cache 實際被 Snapshot 改變的 Alias 名稱（新增、刪除或 Member 變更；依名稱排序）。Cache 本來就與 Snapshot 相同的 Alias 不列在 `snapshot_updated`，也不列在 `snapshot_skipped` |
 | `snapshot_skipped` | `list[str]` | 因仍有 Task 在 Queue 而略過的 Alias 名稱 |
 | `elapsed` | `float` | Flush 花費秒數（busy 時為 `0.0`） |
-| `oldest_task_age` | `float \| None` | Flush 結束時 Queue 中最舊 Task 已等待的秒數（依 `sync_task.created_at`）；Queue 為空時為 `None` |
+| `oldest_task_age` | `float \| None` | Flush 結束時 Queue 中最舊 Task 已等待的秒數（依 `sync_task.created_at`）；Queue 為空時為 `None`；busy 時不計算，也是 `None` |
+
+每個 Outcome 都是一個 Task list 加上由它算出的 `*_count`（唯讀 property）。
 
 ## 保證
 
@@ -132,10 +134,24 @@ class Directory(Protocol):
 |---|---|---|---|
 | `flush_lock_busy` | INFO | report 為 busy | - |
 | `task_obsolete` | INFO | 每個 `OBSOLETE` Task 一筆 | `task_id`、`kind`、`action`、`alias_name`、`user_uid` |
-| `flush_summary` | INFO | 每次非 busy 的 Flush 一筆 | `done_count`、`retry_count`、`obsolete_count`、`stop_reason`、`snapshot_status`、`snapshot_updated`、`snapshot_skipped`、`elapsed_seconds`、`oldest_task_age_seconds`（Queue 為空時省略） |
-| `flush_unexpected_error` | ERROR | 建立 Directory、Flush 或記 log 時發生非預期例外（例如未設定 `LDAP_CA_CERT_FILE`） | `error` |
+| `flush_summary` | INFO | 每次非 busy 的 Flush 一筆 | `done_count`、`retry_count`、`obsolete_count`、`stop_reason`、`snapshot_status`、`snapshot_updated`、`snapshot_skipped`、`elapsed_seconds`、`oldest_task_age_seconds`（一定存在；Queue 為空時為 `null`，告警可直接依賴此欄位） |
+| `alias_task_failed`／`user_task_failed` | ERROR | 每個 `RETRY` Task 一筆，由 LDAP Directory 在判定時記錄 | `task_id`、`action`、`alias_name`、`user_uid`、LDAP `error` |
+| `flush_unexpected_error` | ERROR | 建立 Directory、Flush 或記 log 時發生非預期例外（例如未設定 `LDAP_CA_CERT_FILE`） | `error`、`traceback`（完整 traceback 文字） |
 
-每個 `RETRY` Task 由 LDAP Directory 在判定時記一筆 `alias_task_failed`／`user_task_failed`（ERROR，含 `task_id`、`alias_name`、`user_uid` 與 LDAP `error`）；排程入口不重複記錄。LDAP 細節 event（`ldap_retry`、`ldap_connect_failed`、`ldap_unavailable`、`member_dn_skipped` 等）也由 LDAP Directory 記錄。
+spec 所說的「per-Task Retry error event」就是上表的 `alias_task_failed`／`user_task_failed`：它由 LDAP Directory 記錄（只有它知道 LDAP 錯誤），排程入口不重複記錄。LDAP 細節 event（`ldap_retry`、`ldap_retry_deadline`、`ldap_connect_failed`、`ldap_unavailable`、`member_dn_skipped`、`alias_entry_skipped` 等）也由 LDAP Directory 記錄。
+
+`log_event` 一般會省略值為 `None` 的欄位；需要固定存在的欄位以 `keep_null=(...)` 指名，值為 `None` 時輸出 JSON `null`。目前只有 `flush_summary` 的 `oldest_task_age_seconds` 這樣做，其他 event 的輸出格式不變。
+
+### 沿用的 "user" event 名稱
+
+Member Task 的 event 名稱與訊息仍寫 "user"：`user_task_failed`、`user_already_member`、`user_not_member`，以及 "gave up on user task"、"user already a member of alias, skipping add"、"user not a member of alias, skipping remove"。這是刻意沿用舊 flush 的名稱，讓既有的 log 查詢與告警規則繼續有效；它們指的是 Member。不要改名，除非同時更新 log pipeline。
+
+### 時間上限
+
+- 每個 LDAP request 的重試等待為 `0.5, 1, 2, 4, 8` 秒；connect timeout 10 秒，每個回應（TLS handshake、bind、request）的 receive timeout 10 秒。在新連線上的一次 attempt 最多 40 秒；移除最後一位 Member 的 fallback 再多一個 modify，最多 50 秒。
+- `apply` 開始 16 秒後不再開始新的等待或重試（快速失敗時五次等待共 15.5 秒仍會全部用上），因此一個 Task 最多 66 秒。
+- Snapshot budget 60 秒：每個 page 前與每次重試前檢查，超過即丟 `DirectoryUnavailable`；最後一次 attempt 最多再 40 秒，因此 Snapshot 最多 100 秒。
+- 整個 Flush 最多 300（Task budget）+ 66（進行中的 Task）+ 100（Snapshot）= 466 秒，低於 Django-Q kill timeout 480 秒。此上限假設 LDAP URI 只解析到一個位址、每個回應在一個 receive timeout 內收到。
 
 ## 測試
 

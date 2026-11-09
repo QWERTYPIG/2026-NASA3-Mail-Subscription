@@ -26,7 +26,7 @@ class Alias(models.Model):
 
 
 class AliasMember(models.Model):
-    """One row per (alias, member) pair — local cache of LDAP uniqueMember.
+    """One row per (alias, member) pair - local cache of LDAP uniqueMember.
 
     Insertion order is kept by ``id`` so member lists stay in the order
     members were added.

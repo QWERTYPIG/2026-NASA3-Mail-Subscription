@@ -7,6 +7,7 @@ module; all LDAP knowledge lives in the LDAP Directory.
 
 import logging
 import os
+import traceback
 
 from . import sync
 from .ldap_directory import LdapDirectory
@@ -27,6 +28,7 @@ def flush_ldap_tasks() -> None:
             "flush_unexpected_error",
             "flush_ldap_tasks failed with an unexpected error",
             error=str(exc),
+            traceback="".join(traceback.format_exception(exc)),
         )
         return
     _log_report(report)
@@ -71,4 +73,6 @@ def _log_report(report):
         snapshot_skipped=report.snapshot_skipped,
         elapsed_seconds=round(report.elapsed, 3),
         oldest_task_age_seconds=report.oldest_task_age,
+        # Always present, null when the Queue is empty, so alerts can rely on it.
+        keep_null=("oldest_task_age_seconds",),
     )

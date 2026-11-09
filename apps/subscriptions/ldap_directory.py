@@ -13,7 +13,9 @@ import os
 import re
 import ssl
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import NamedTuple
 
 from ldap3 import LEVEL, MODIFY_ADD, MODIFY_DELETE, Connection, Server, Tls
 from ldap3.core.exceptions import (
@@ -42,8 +44,23 @@ PEOPLE_DN = f"ou=people,{BASE_DN}"
 CONNECT_TIMEOUT = 10  # seconds to open the connection
 RECEIVE_TIMEOUT = 10  # seconds to wait for each reply
 RETRY_DELAYS = [0.5, 1, 2, 4, 8]  # seconds between attempts of one request
-SNAPSHOT_BUDGET = 60  # seconds; checked before each Snapshot page
+# No retry wait or attempt starts later than this many seconds after apply
+# began. Fast failures still get every wait (15.5 s in all); slow ones stop
+# early, so one Task cannot hold up the Flush for minutes.
+APPLY_DEADLINE = 16
+SNAPSHOT_BUDGET = 60  # seconds; checked before each page and before each retry
 SNAPSHOT_PAGE_SIZE = 500
+
+# Worst cases, in seconds. One attempt on a new connection blocks at most:
+# TCP connect (CONNECT_TIMEOUT), then the TLS handshake, the bind and the
+# request (RECEIVE_TIMEOUT each). This assumes the LDAP URI resolves to one
+# address and each reply arrives within one receive timeout.
+ATTEMPT_WORST = CONNECT_TIMEOUT + 3 * RECEIVE_TIMEOUT  # 40
+# The last attempt starts by the deadline; removing the last Member adds the
+# Placeholder fallback modify to it.
+APPLY_WORST = APPLY_DEADLINE + ATTEMPT_WORST + RECEIVE_TIMEOUT  # 66
+# The last page, or its retry, starts by the Snapshot budget.
+SNAPSHOT_WORST = SNAPSHOT_BUDGET + ATTEMPT_WORST  # 100
 
 _PAGED_RESULTS_OID = "1.2.840.113556.1.4.319"
 # A Member DN is exactly uid=<uid>,ou=people,<base DN> (matched lowercased).
@@ -90,28 +107,14 @@ def connect(config):
 class LdapDirectory:
     """The production Directory (see ``apps.subscriptions.sync.Directory``).
 
-    Configuration not passed in is read from the environment (``LDAP_URI``,
+    ``config`` defaults to ``LdapConfig.from_env()`` (``LDAP_URI``,
     ``LDAP_BIND_DN``, ``LDAP_BIND_PASSWORD``, ``LDAP_CA_CERT_FILE``). Building
     one opens no connection: it connects on first use. Call ``close()`` when
     done. ``clock`` (monotonic seconds) is for tests.
     """
 
-    def __init__(
-        self,
-        *,
-        uri=None,
-        bind_dn=None,
-        bind_password=None,
-        ca_cert_file=None,
-        clock=time.monotonic,
-    ):
-        env = LdapConfig.from_env()
-        self._config = LdapConfig(
-            uri=env.uri if uri is None else uri,
-            bind_dn=env.bind_dn if bind_dn is None else bind_dn,
-            bind_password=env.bind_password if bind_password is None else bind_password,
-            ca_cert_file=env.ca_cert_file if ca_cert_file is None else ca_cert_file,
-        )
+    def __init__(self, config: LdapConfig | None = None, *, clock=time.monotonic):
+        self._config = LdapConfig.from_env() if config is None else config
         self._clock = clock
         self._conn = None
 
@@ -123,53 +126,28 @@ class LdapDirectory:
 
     def apply(self, task):
         """Write one Task; see the Outcome table in docs/06-sync-interface.md."""
+        deadline = self._clock() + APPLY_DEADLINE
         try:
-            self._request(lambda conn: self._write(conn, task))
+            self._request(lambda conn: self._write(conn, task), deadline)
         except _LDAP_ERRORS as exc:
             return self._classify(task, exc)
         return Outcome.DONE
 
     def _write(self, conn, task):
-        dn = _alias_dn(task.alias_name)
-        if task.kind == Task.KIND_ALIAS:
-            if task.action == Task.ACTION_ADD:
-                conn.add(
-                    dn,
-                    object_class=["groupOfUniqueNames"],
-                    attributes={"cn": task.alias_name, "uniqueMember": [self._config.bind_dn]},
-                )
-            else:
-                conn.delete(dn)
-            return
-        member = _member_dn(task.user_uid)
-        if task.action == Task.ACTION_ADD:
-            conn.modify(dn, {"uniqueMember": [(MODIFY_ADD, [member])]})
-            return
-        try:
-            conn.modify(dn, {"uniqueMember": [(MODIFY_DELETE, [member])]})
-        except LDAPObjectClassViolationResult:
-            # The last Member: keep the entry valid with the Placeholder
-            # member, in the same modify. It is never removed afterwards.
-            conn.modify(
-                dn,
-                {
-                    "uniqueMember": [
-                        (MODIFY_ADD, [self._config.bind_dn]),
-                        (MODIFY_DELETE, [member]),
-                    ]
-                },
-            )
+        _rule(task).write(conn, task, self._config.bind_dn)
 
     def snapshot(self):
         """Read every Alias under ``ou=Aliases``, page by page; never partial."""
-        started = self._clock()
+        deadline = self._clock() + SNAPSHOT_BUDGET
         snapshot = {}
         cookie = None
         while True:
-            if self._clock() - started > SNAPSHOT_BUDGET:
+            if self._clock() > deadline:
                 self._snapshot_failed(f"Snapshot budget of {SNAPSHOT_BUDGET}s exceeded")
             try:
-                entries, result = self._request(lambda conn: self._search_page(conn, cookie))
+                entries, result = self._request(
+                    lambda conn: self._search_page(conn, cookie), deadline
+                )
             except _LDAP_ERRORS as exc:
                 self._snapshot_failed(str(exc), exc)
             if result.get("result") != 0:
@@ -177,10 +155,9 @@ class LdapDirectory:
             for found in entries:
                 if found.get("type") == "searchResEntry":
                     name, members = self._read_entry(found)
-                    snapshot[name] = members
-            cookie = (
-                result.get("controls", {}).get(_PAGED_RESULTS_OID, {}).get("value", {}).get("cookie")
-            )
+                    if name is not None:
+                        snapshot[name] = members
+            cookie = _next_cookie(result)
             if not cookie:
                 return snapshot
 
@@ -200,9 +177,18 @@ class LdapDirectory:
         raise DirectoryUnavailable(error) from cause
 
     def _read_entry(self, found):
+        """Return ``(alias_name, member_uids)``; ``alias_name`` is None if unusable."""
         attributes = found.get("attributes", {})
         cn = attributes.get("cn")
-        name = cn[0] if isinstance(cn, list) else cn
+        name = (cn[0] if cn else None) if isinstance(cn, list) else cn
+        if not name:
+            log_event(
+                logging.WARNING,
+                "alias_entry_skipped",
+                "Alias entry has no cn, skipped",
+                dn=found.get("dn"),
+            )
+            return None, set()
         members = set()
         for member_dn in attributes.get("uniqueMember") or []:
             if member_dn.lower() == self._config.bind_dn.lower():
@@ -246,13 +232,15 @@ class LdapDirectory:
             except _LDAP_ERRORS:
                 pass
 
-    def _request(self, fn):
+    def _request(self, fn, deadline):
         """Return ``fn(connection)``, retrying transient failures.
 
         Connection, server-availability and other non-result errors are
         retried after each of ``RETRY_DELAYS``; other result errors are raised
-        at once. Once the waits run out, a failure meaning LDAP itself cannot
-        be used raises ``DirectoryUnavailable``; anything else is re-raised.
+        at once. No wait (and so no retry) starts if it would end after
+        ``deadline`` (clock seconds). Once retries stop, a failure meaning
+        LDAP itself cannot be used raises ``DirectoryUnavailable``; anything
+        else is re-raised.
         """
         for delay in (*RETRY_DELAYS, None):
             try:
@@ -266,6 +254,14 @@ class LdapDirectory:
                 self._discard_connection()
                 error = exc
             if delay is None:
+                break
+            if self._clock() + delay > deadline:
+                log_event(
+                    logging.WARNING,
+                    "ldap_retry_deadline",
+                    "LDAP error, no time left to retry",
+                    error=str(error),
+                )
                 break
             log_event(
                 logging.WARNING,
@@ -287,25 +283,23 @@ class LdapDirectory:
         raise error
 
     def _classify(self, task, exc):
-        already = _ALREADY_IN_WANTED_STATE.get((task.kind, task.action))
-        if already is not None and isinstance(exc, already[0]):
+        rule = _rule(task)
+        already = rule.already_in_wanted_state
+        if already is not None and isinstance(exc, already.result):
             log_event(
                 logging.INFO,
-                already[1],
-                already[2],
+                already.event,
+                already.message,
                 alias_name=task.alias_name,
                 user_uid=task.user_uid,
             )
             return Outcome.DONE
-        if isinstance(exc, LDAPNoSuchObjectResult):
-            if task.kind == Task.KIND_MEMBER:
-                return Outcome.OBSOLETE
-            if task.action == Task.ACTION_REMOVE:
-                return Outcome.DONE
+        if isinstance(exc, LDAPNoSuchObjectResult) and rule.entry_missing is not None:
+            return rule.entry_missing
         log_event(
             logging.ERROR,
-            f"{_EVENT_KIND[task.kind]}_task_failed",
-            f"gave up on {_EVENT_KIND[task.kind]} task",
+            rule.failed_event,
+            rule.failed_message,
             task_id=task.id,
             action=task.action,
             alias_name=task.alias_name,
@@ -344,24 +338,108 @@ def _member_dn(user_uid):
     return f"uid={user_uid},{PEOPLE_DN}"
 
 
-# Event names kept from the old flush code: "alias_task_failed" / "user_task_failed".
-_EVENT_KIND = {Task.KIND_ALIAS: "alias", Task.KIND_MEMBER: "user"}
+def _next_cookie(result):
+    """The paged-results cookie of a search reply; empty when no pages remain."""
+    control = result.get("controls", {}).get(_PAGED_RESULTS_OID, {})
+    return control.get("value", {}).get("cookie")
 
-# (kind, action) -> (result meaning "already in the wanted state", event, message)
-_ALREADY_IN_WANTED_STATE = {
-    (Task.KIND_ALIAS, Task.ACTION_ADD): (
-        LDAPEntryAlreadyExistsResult,
-        "alias_already_exists",
-        "alias already exists in LDAP, skipping add",
+
+def _add_alias(conn, task, placeholder_dn):
+    conn.add(
+        _alias_dn(task.alias_name),
+        object_class=["groupOfUniqueNames"],
+        attributes={"cn": task.alias_name, "uniqueMember": [placeholder_dn]},
+    )
+
+
+def _delete_alias(conn, task, placeholder_dn):
+    conn.delete(_alias_dn(task.alias_name))
+
+
+def _add_member(conn, task, placeholder_dn):
+    conn.modify(
+        _alias_dn(task.alias_name),
+        {"uniqueMember": [(MODIFY_ADD, [_member_dn(task.user_uid)])]},
+    )
+
+
+def _remove_member(conn, task, placeholder_dn):
+    dn = _alias_dn(task.alias_name)
+    member = _member_dn(task.user_uid)
+    try:
+        conn.modify(dn, {"uniqueMember": [(MODIFY_DELETE, [member])]})
+    except LDAPObjectClassViolationResult:
+        # The last Member: keep the entry valid with the Placeholder member,
+        # in the same modify. It is never removed afterwards.
+        conn.modify(
+            dn,
+            {"uniqueMember": [(MODIFY_ADD, [placeholder_dn]), (MODIFY_DELETE, [member])]},
+        )
+
+
+class _AlreadyInWantedState(NamedTuple):
+    """The LDAP result meaning a Task's change is already in LDAP (Done)."""
+
+    result: type[LDAPOperationResult]
+    event: str  # INFO event logged when it happens
+    message: str
+
+
+class _TaskRule(NamedTuple):
+    """Everything LDAP-specific about one (kind, action) of Task."""
+
+    write: Callable[[Connection, Task, str], None]  # (conn, task, Placeholder member DN)
+    already_in_wanted_state: _AlreadyInWantedState | None
+    entry_missing: Outcome | None  # Outcome on noSuchObject; None means Retry
+    failed_event: str  # ERROR event for a Retry, with the LDAP error
+    failed_message: str
+
+
+# Member Task events say "user" (user_task_failed, user_already_member,
+# user_not_member and their "user ..." messages) on purpose: the names are
+# kept from the old flush code so existing log queries and alerts keep
+# working. They mean a Member. See docs/06-sync-interface.md.
+_ALIAS_TASK_FAILED = ("alias_task_failed", "gave up on alias task")
+_MEMBER_TASK_FAILED = ("user_task_failed", "gave up on user task")
+
+# The single source of how each Task becomes an LDAP request and which LDAP
+# reply means which Outcome (the Outcome table in docs/06-sync-interface.md).
+_TASK_RULES = {
+    (Task.KIND_ALIAS, Task.ACTION_ADD): _TaskRule(
+        _add_alias,
+        _AlreadyInWantedState(
+            LDAPEntryAlreadyExistsResult,
+            "alias_already_exists",
+            "alias already exists in LDAP, skipping add",
+        ),
+        None,
+        *_ALIAS_TASK_FAILED,
     ),
-    (Task.KIND_MEMBER, Task.ACTION_ADD): (
-        LDAPAttributeOrValueExistsResult,
-        "user_already_member",
-        "user already a member of alias, skipping add",
+    (Task.KIND_ALIAS, Task.ACTION_REMOVE): _TaskRule(
+        _delete_alias, None, Outcome.DONE, *_ALIAS_TASK_FAILED
     ),
-    (Task.KIND_MEMBER, Task.ACTION_REMOVE): (
-        LDAPNoSuchAttributeResult,
-        "user_not_member",
-        "user not a member of alias, skipping remove",
+    (Task.KIND_MEMBER, Task.ACTION_ADD): _TaskRule(
+        _add_member,
+        _AlreadyInWantedState(
+            LDAPAttributeOrValueExistsResult,
+            "user_already_member",
+            "user already a member of alias, skipping add",
+        ),
+        Outcome.OBSOLETE,
+        *_MEMBER_TASK_FAILED,
+    ),
+    (Task.KIND_MEMBER, Task.ACTION_REMOVE): _TaskRule(
+        _remove_member,
+        _AlreadyInWantedState(
+            LDAPNoSuchAttributeResult,
+            "user_not_member",
+            "user not a member of alias, skipping remove",
+        ),
+        Outcome.OBSOLETE,
+        *_MEMBER_TASK_FAILED,
     ),
 }
+
+
+def _rule(task):
+    return _TASK_RULES[(task.kind, task.action)]

@@ -1,8 +1,9 @@
 """Tests for the Flush (``sync.flush`` given a Directory). No LDAP, no mocks."""
 
 from datetime import timedelta
+from unittest.mock import patch
 
-from django.db import DEFAULT_DB_ALIAS, OperationalError, connection, connections
+from django.db import OperationalError, connection
 from django.test import TestCase
 from django.utils import timezone
 
@@ -10,6 +11,7 @@ from .. import sync, writes
 from ..models import Alias, AliasMember, SyncTask
 from ..sync import DirectoryUnavailable, Outcome, SnapshotStatus, StopReason
 from .fakes import FakeDirectory
+from .support import flush_lock_is_free, hold_flush_lock, other_connection
 
 
 def queue():
@@ -191,38 +193,6 @@ class TaskBudgetTest(TestCase):
         self.assertEqual(report.stop_reason, StopReason.BUDGET)
 
 
-def other_connection(test):
-    """A second database session, as another worker process would have."""
-    conn = connections.create_connection(DEFAULT_DB_ALIAS)
-    conn.ensure_connection()
-    test.addCleanup(conn.close)
-    return conn
-
-
-def hold_flush_lock(conn):
-    with conn.cursor() as cursor:
-        cursor.execute(
-            "SELECT pg_advisory_lock(%s, %s)",
-            [sync.FLUSH_LOCK_NAMESPACE, sync.FLUSH_LOCK_KEY],
-        )
-
-
-def flush_lock_is_free(conn):
-    """Take and release the flush lock from ``conn``; True if it was free."""
-    with conn.cursor() as cursor:
-        cursor.execute(
-            "SELECT pg_try_advisory_lock(%s, %s)",
-            [sync.FLUSH_LOCK_NAMESPACE, sync.FLUSH_LOCK_KEY],
-        )
-        free = cursor.fetchone()[0]
-        if free:
-            cursor.execute(
-                "SELECT pg_advisory_unlock(%s, %s)",
-                [sync.FLUSH_LOCK_NAMESPACE, sync.FLUSH_LOCK_KEY],
-            )
-    return free
-
-
 class FlushLockTest(TestCase):
     def test_busy_when_lock_held_by_another_connection(self):
         writes.create_alias("a")
@@ -237,6 +207,16 @@ class FlushLockTest(TestCase):
         self.assertEqual(report.snapshot_status, SnapshotStatus.NOT_TAKEN)
         self.assertEqual(queue(), [("alias", "add", "a", None)])
 
+    def test_busy_flush_only_tries_the_lock(self):
+        writes.create_alias("a")
+        hold_flush_lock(other_connection(self))
+
+        with self.assertNumQueries(1):  # pg_try_advisory_lock, nothing else
+            report = sync.flush(FakeDirectory())
+
+        self.assertTrue(report.busy)
+        self.assertIsNone(report.oldest_task_age)  # not computed when busy
+
     def test_lock_released_after_normal_return(self):
         report = sync.flush(FakeDirectory())
 
@@ -250,6 +230,17 @@ class FlushLockTest(TestCase):
             sync.flush(FakeDirectory(outcomes={"a": RuntimeError("bug")}))
 
         self.assertTrue(flush_lock_is_free(other_connection(self)))
+
+    def test_original_exception_wins_when_releasing_the_lock_also_fails(self):
+        writes.create_alias("a")
+        release = sync._unlock
+        self.addCleanup(release)  # the failed release left the lock held
+
+        with patch.object(sync, "_unlock", side_effect=OperationalError("connection lost")):
+            with self.assertRaisesRegex(RuntimeError, "bug") as raised:
+                sync.flush(FakeDirectory(outcomes={"a": RuntimeError("bug")}))
+
+        self.assertIn("connection lost", "\n".join(raised.exception.__notes__))
 
     def test_alias_write_lock_does_not_block_flush_lock(self):
         writes.create_alias("a")
@@ -290,6 +281,18 @@ class SnapshotTest(TestCase):
         self.assertEqual(members("ldap-only"), {"y"})
         self.assertEqual(members("cache-only"), set())
         self.assertEqual(report.snapshot_updated, ["cache-only", "empty", "ldap-only"])
+
+    def test_alias_already_matching_snapshot_is_neither_updated_nor_skipped(self):
+        writes.create_alias("same")
+        writes.add_member("same", "x")
+        writes.create_alias("changed")
+        directory = FakeDirectory(snapshot={"same": {"x"}, "changed": {"y"}})
+
+        report = sync.flush(directory)
+
+        self.assertEqual(report.snapshot_updated, ["changed"])
+        self.assertEqual(report.snapshot_skipped, [])
+        self.assertEqual(members("same"), {"x"})
 
     def test_snapshot_keeps_display_fields(self):
         writes.create_alias("a", display_name="A", description="d")

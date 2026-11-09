@@ -113,9 +113,9 @@ Django-Q schedule 每 30 分鐘執行 `flush_ldap_tasks`（`apps/subscriptions/t
 3. `sync.flush` 取得 PostgreSQL flush lock；已被持有時回傳 busy，worker 記 `flush_lock_busy`，不連 LDAP。
 4. 依 `id` 把 Flush 開始時已存在的 task 交給 Directory，受 300 秒 Task budget 限制。
 5. 以 Snapshot（60 秒 budget）校正沒有待處理 task 的 alias。
-6. worker 記一筆 `flush_summary` JSON event（各 Outcome 數量、停止原因、Snapshot 狀態與更新／略過的 alias、耗時、最舊待處理 task 的秒數）；每個 Obsolete task 記一筆 `task_obsolete`，每個 Retry 由 LDAP Directory 記 `alias_task_failed`／`user_task_failed`（含 LDAP 錯誤）。非預期例外記 `flush_unexpected_error`。
+6. worker 記一筆 `flush_summary` JSON event（各 Outcome 數量、停止原因、Snapshot 狀態與實際有變更／略過的 alias、耗時、最舊待處理 task 的秒數；Queue 為空時該欄位為 `null`）；每個 Obsolete task 記一筆 `task_obsolete`。每個 Retry 的 error event 就是 LDAP Directory 在判定時記的 `alias_task_failed`／`user_task_failed`（含 LDAP 錯誤），worker 不另記。非預期例外記 `flush_unexpected_error`（含 traceback）。
 
-Django-Q 的 task kill timeout 為 480 秒，高於 Flush 最壞情況（連線 10 + Task budget 300 + 最後一個 task 的重試約 76 + Snapshot budget 60，約 446 秒）；re-delivery delay（`retry`）為 540 秒，高於 kill timeout，因此健康的 Flush 不會被中途終止或重複啟動。
+Django-Q 的 task kill timeout 為 480 秒，高於 Flush 最壞情況 466 秒：Task budget 300 + 進行中的 task 66（每次 `apply` 開始 16 秒後不再重試，最後一次 attempt 在新連線上最多 connect 10 + TLS handshake 10 + bind 10 + request 10 + 移除最後一位 Member 的 fallback 10）+ Snapshot 100（budget 60，之後最多再一次 40 秒的 attempt）。此上限假設 LDAP URI 只解析到一個位址、每個回應在一個 receive timeout 內收到。re-delivery delay（`retry`）為 540 秒，高於 kill timeout，因此健康的 Flush 不會被中途終止或重複啟動。
 
 flush lock 只防止同一節點重疊 Flush，不是節點 fencing。失敗工作會保留在 queue；告警門檻與詳細處置屬於 [05 Migration](./05-migration.md) 的營運範圍。
 
