@@ -1,34 +1,32 @@
-"""Tests for apps/subscriptions/tasks.py (LDAP sync side).
+"""Tests for the scheduled Flush entry point (apps/subscriptions/tasks.py).
 
-Moved unchanged from tests.py. tasks.py still imports the old queue models
-(AliasTaskQueue, UserTaskQueue) and Alias.user_id, so this module fails to
-import until the LDAP sync is ported to the sync interface. Owned by the LDAP
-sync side; see the interface plan.
+The LDAP Directory constructor is replaced by the shared ``FakeDirectory``,
+so the real sync module and test database run a whole Flush with no LDAP.
 """
 
 import json
 import logging
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-from django.contrib.auth import get_user_model
-from django.core.cache import cache
-from django.core.exceptions import ValidationError
 from django.test import SimpleTestCase, TestCase
-from ldap3.core.exceptions import LDAPException
-from rest_framework.test import APIClient
 
-from ..models import Alias, AliasTaskQueue, UserTaskQueue
-from ..serializers import UserSubscriptionUpdateSerializer
-from ..tasks import flush_alias_tasks, flush_user_tasks, log_event, run_consistency_check
+from .. import tasks, writes
+from ..log import log_event
+from ..models import SyncTask
+from ..sync import Outcome
+from .fakes import FakeDirectory
+from .test_sync import hold_flush_lock, other_connection
+
+LOGGER = "mailsub-worker"
 
 
+def events(captured):
+    return [json.loads(record.getMessage()) for record in captured.records]
 
 
-class TaskLoggingTest(SimpleTestCase):
+class LogEventTest(SimpleTestCase):
     def test_log_event_outputs_json(self):
-        logger = logging.getLogger("mailsub-worker")
-
-        with self.assertLogs(logger, level="ERROR") as captured:
+        with self.assertLogs(LOGGER, level="ERROR") as captured:
             log_event(
                 logging.ERROR,
                 "ldap_connect_failed",
@@ -38,177 +36,103 @@ class TaskLoggingTest(SimpleTestCase):
                 empty=None,
             )
 
-        payload = json.loads(captured.output[0].split(":", 2)[-1].strip())
+        [payload] = events(captured)
         self.assertEqual(payload["level"], "ERROR")
-        self.assertEqual(payload["logger"], "mailsub-worker")
+        self.assertEqual(payload["logger"], LOGGER)
         self.assertEqual(payload["event"], "ldap_connect_failed")
         self.assertEqual(payload["message"], "failed to connect to LDAP")
         self.assertEqual(payload["ldap_uri"], "ldaps://ldap.example:636")
         self.assertEqual(payload["error"], "timeout")
         self.assertNotIn("empty", payload)
 
-    @patch.dict("os.environ", {"LDAP_CA_CERT_FILE": "test-ca.pem"})
-    @patch("apps.subscriptions.tasks.Connection")
-    @patch("apps.subscriptions.tasks.Server")
-    @patch("apps.subscriptions.tasks.Tls")
-    def test_connect_failure_logs_structured_error(
-        self, mock_tls, mock_server, mock_connection
-    ):
-        from ..tasks import _connect
 
-        mock_connection.side_effect = LDAPException("timeout")
-        logger = logging.getLogger("mailsub-worker")
+class ScheduledFlushTest(TestCase):
+    def run_flush(self, directory, *, enabled="1", level="INFO"):
+        """Run the entry point with ``directory`` as the LDAP Directory."""
+        with patch.dict("os.environ", {"FLUSH_ENABLED": enabled}):
+            with patch.object(tasks, "LdapDirectory", return_value=directory) as built:
+                with self.assertLogs(LOGGER, level=level) as captured:
+                    tasks.flush_ldap_tasks()
+        return built, events(captured)
 
-        with self.assertLogs(logger, level="ERROR") as captured:
-            with self.assertRaises(LDAPException):
-                _connect()
+    def test_flush_disabled_builds_no_directory(self):
+        directory = FakeDirectory()
 
-        payload = json.loads(captured.output[0].split(":", 2)[-1].strip())
-        self.assertEqual(payload["event"], "ldap_connect_failed")
-        self.assertEqual(payload["error"], "timeout")
+        built, logged = self.run_flush(directory, enabled="0")
 
+        built.assert_not_called()
+        self.assertEqual([e["event"] for e in logged], ["flush_disabled"])
+        self.assertEqual(directory.applied, [])
+        self.assertEqual(directory.snapshot_calls, 0)
 
-class FlushAliasTasksTest(TestCase):
-    def _make_conn(self):
-        conn = MagicMock()
-        conn.add.return_value = True
-        conn.delete.return_value = True
-        return conn
+    def test_busy_flush_logs_busy_event(self):
+        writes.create_alias("a")
+        hold_flush_lock(other_connection(self))
+        directory = FakeDirectory()
 
-    def test_add_alias_calls_ldap_add(self):
-        AliasTaskQueue.objects.create(alias_name="test-list", action="add")
-        conn = self._make_conn()
-        flush_alias_tasks(conn)
-        conn.add.assert_called_once()
-        # Task 應被刪除
-        self.assertEqual(AliasTaskQueue.objects.count(), 0)
+        _, logged = self.run_flush(directory)
 
-    def test_remove_alias_calls_ldap_delete(self):
-        AliasTaskQueue.objects.create(alias_name="test-list", action="remove")
-        conn = self._make_conn()
-        flush_alias_tasks(conn)
-        conn.delete.assert_called_once()
-        self.assertEqual(AliasTaskQueue.objects.count(), 0)
+        self.assertEqual([e["event"] for e in logged], ["flush_lock_busy"])
+        self.assertEqual(directory.applied, [])
+        self.assertEqual(directory.close_calls, 1)
 
-    def test_remove_alias_cleans_dangling_user_tasks(self):
-        AliasTaskQueue.objects.create(alias_name="test-list", action="remove")
-        UserTaskQueue.objects.create(
-            alias_name="test-list", user_uid="b12345", action="add"
+    def test_normal_flush_logs_one_summary_event_with_report_fields(self):
+        writes.create_alias("a")
+        writes.add_member("a", "x")
+        writes.create_alias("b")
+        writes.add_member("b", "y")
+        writes.create_alias("c")
+        writes.add_member("c", "z")
+        obsolete_id = SyncTask.objects.get(alias_name="c", kind="member").id
+        directory = FakeDirectory(
+            outcomes={"b": Outcome.RETRY, obsolete_id: Outcome.OBSOLETE},
+            snapshot={"a": {"x"}, "c": set()},
         )
-        conn = self._make_conn()
-        flush_alias_tasks(conn)
-        # 關聯的 user task 也要一起清掉
-        self.assertEqual(UserTaskQueue.objects.count(), 0)
 
-    def test_ldap_failure_leaves_task_in_queue(self):
-        AliasTaskQueue.objects.create(alias_name="bad-alias", action="add")
-        conn = self._make_conn()
-        conn.add.side_effect = LDAPException("timeout")
-        with patch("apps.subscriptions.tasks.time.sleep"):  # 跳過 retry sleep
-            flush_alias_tasks(conn)
-        # Task 應該留在 queue 等下次重試
-        self.assertEqual(AliasTaskQueue.objects.count(), 1)
+        _, logged = self.run_flush(directory)
 
+        [summary] = [e for e in logged if e["event"] == "flush_summary"]
+        self.assertEqual(summary["level"], "INFO")
+        self.assertEqual(summary["done_count"], 3)
+        self.assertEqual(summary["retry_count"], 1)
+        self.assertEqual(summary["obsolete_count"], 1)
+        self.assertEqual(summary["stop_reason"], "none")
+        self.assertEqual(summary["snapshot_status"], "applied")
+        self.assertEqual(summary["snapshot_updated"], ["a", "c"])
+        self.assertEqual(summary["snapshot_skipped"], ["b"])
+        self.assertIsInstance(summary["elapsed_seconds"], float)
+        self.assertGreaterEqual(summary["oldest_task_age_seconds"], 0)
+        self.assertEqual(directory.close_calls, 1)
 
-class ConsistencyCheckTest(TestCase):
-    def test_updates_alias_user_ids_from_ldap(self):
-        Alias.objects.create(alias_name="faculty", user_id=[])
+    def test_each_obsolete_task_logs_its_own_info_event(self):
+        writes.create_alias("c")
+        writes.add_member("c", "z")
+        writes.add_member("c", "w")
+        directory = FakeDirectory(
+            outcomes={"c": Outcome.OBSOLETE}, snapshot={}
+        )
 
-        # 模擬 LDAP entry 格式
-        entry = MagicMock()
-        entry.cn.value = "faculty"
-        entry.uniqueMember.values = [
-            "uid=b12902000,ou=people,dc=csie,dc=ntu,dc=edu,dc=tw",
-            "uid=mailtest,ou=people,dc=csie,dc=ntu,dc=edu,dc=tw",  # bind DN（placeholder）
-        ]
+        _, logged = self.run_flush(directory)
 
-        conn = MagicMock()
-        conn.entries = [entry]
+        obsolete = [e for e in logged if e["event"] == "task_obsolete"]
+        self.assertEqual(
+            [(e["level"], e["alias_name"], e["kind"], e["action"], e.get("user_uid")) for e in obsolete],
+            [
+                ("INFO", "c", "alias", "add", None),
+                ("INFO", "c", "member", "add", "z"),
+                ("INFO", "c", "member", "add", "w"),
+            ],
+        )
+        self.assertTrue(all(isinstance(e["task_id"], int) for e in obsolete))
 
-        run_consistency_check(conn)
+    def test_unexpected_exception_logs_unexpected_error_event(self):
+        writes.create_alias("a")
+        directory = FakeDirectory(outcomes={"a": RuntimeError("LDAP_CA_CERT_FILE is not set")})
 
-        alias = Alias.objects.get(alias_name="faculty")
-        # bind DN 應被過濾掉
-        self.assertEqual(alias.user_id, ["b12902000"])
+        _, logged = self.run_flush(directory)
 
-
-class FlushLdapTasksTest(TestCase):
-    @patch("apps.subscriptions.tasks._connect")
-    @patch("apps.subscriptions.tasks.cache")
-    def test_skips_if_lock_not_acquired(self, mock_cache, mock_connect):
-        mock_cache.add.return_value = False  # 模擬 lock 已被佔用
-        from ..tasks import flush_ldap_tasks
-
-        flush_ldap_tasks()
-        mock_connect.assert_not_called()
-
-    @patch("apps.subscriptions.tasks._connect")
-    @patch("apps.subscriptions.tasks.cache")
-    def test_releases_lock_on_success(self, mock_cache, mock_connect):
-        mock_cache.add.return_value = True
-        mock_connect.return_value = MagicMock()
-        from ..tasks import flush_ldap_tasks
-
-        flush_ldap_tasks()
-        mock_cache.delete.assert_called_once()
-
-    @patch.dict("os.environ", {"FLUSH_ENABLED": "0"})
-    @patch("apps.subscriptions.tasks._connect")
-    def test_skips_when_flush_disabled(self, mock_connect):
-        from ..tasks import flush_ldap_tasks
-
-        flush_ldap_tasks()
-        mock_connect.assert_not_called()
-
-    @patch.dict("os.environ", {"FLUSH_ENABLED": "1"})
-    @patch("apps.subscriptions.tasks._connect")
-    @patch("apps.subscriptions.tasks.cache")
-    def test_runs_when_flush_enabled(self, mock_cache, mock_connect):
-        mock_cache.add.return_value = True
-        mock_connect.return_value = MagicMock()
-        from ..tasks import flush_ldap_tasks
-
-        flush_ldap_tasks()
-        mock_connect.assert_called_once()
-
-
-class ConnectLoggingTest(SimpleTestCase):
-    @patch("apps.subscriptions.tasks.Connection")
-    @patch("apps.subscriptions.tasks.Server")
-    @patch("apps.subscriptions.tasks.Tls")
-    def test_logs_on_ldap_connection_failure(
-        self, mock_tls, mock_server, mock_conn_cls
-    ):
-        mock_conn_cls.side_effect = LDAPException("connection refused")
-
-        from apps.subscriptions.tasks import _connect
-
-        logger = logging.getLogger("mailsub-worker")
-
-        with self.assertLogs(logger, level="ERROR") as captured:
-            with self.assertRaises(LDAPException):
-                _connect()
-
-        payload = json.loads(captured.output[0].split(":", 2)[-1].strip())
-        self.assertEqual(payload["event"], "ldap_connect_failed")
-        self.assertEqual(payload["error"], "connection refused")
-
-    @patch("apps.subscriptions.tasks.Connection")
-    @patch("apps.subscriptions.tasks.Server")
-    @patch("apps.subscriptions.tasks.Tls")
-    def test_no_error_log_on_successful_connection(
-        self, mock_tls, mock_server, mock_conn_cls
-    ):
-        from apps.subscriptions.tasks import _connect
-
-        logger = logging.getLogger("mailsub-worker")
-
-        with patch.object(logger, "log") as mock_log:
-            _connect()
-
-        error_calls = [
-            call_args
-            for call_args in mock_log.call_args_list
-            if call_args.args and call_args.args[0] >= logging.ERROR
-        ]
-        self.assertEqual(error_calls, [])
+        self.assertEqual([e["event"] for e in logged], ["flush_unexpected_error"])
+        self.assertEqual(logged[0]["level"], "ERROR")
+        self.assertEqual(logged[0]["error"], "LDAP_CA_CERT_FILE is not set")
+        self.assertEqual(directory.close_calls, 1)
+        self.assertEqual(SyncTask.objects.filter(alias_name="a").count(), 1)

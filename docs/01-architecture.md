@@ -35,8 +35,8 @@ Compose 的主要服務是 `postgres`、`redis`、`web`、`worker` 與 `frontend
 | API | Python 3.11、Django、Django REST Framework | session、權限、業務 API |
 | 認證 | `django-auth-ldap` | LDAP bind 與 `mailAdmin` 群組映射 |
 | 本地資料 | PostgreSQL 15 | 本地快取、Django session 與工作佇列 |
-| Queue/cache | Redis 7 | Django-Q queue、rate-limit cache 與 flush lock |
-| 背景工作 | Django-Q2 | LDAP 同步 worker 與一致性檢查 |
+| Queue/cache | Redis 7 | Django-Q queue 與 rate-limit cache |
+| 背景工作 | Django-Q2 | LDAP 同步 worker（Flush：依序寫入 task 並以 Snapshot 校正快取） |
 | LDAP client | `ldap3` | LDAP 同步 worker 對 LDAP 的讀寫與 TLS 驗證 |
 
 ## 資料與責任邊界
@@ -53,8 +53,8 @@ flowchart TD
     API[Django API] -->|同一 transaction| CacheDB[(PostgreSQL 本地快取)]
     API -->|建立 alias/member 工作| SyncQ[SyncTask]
     SyncQ --> Worker[LDAP 同步 worker]
-    Worker -->|先 alias、後 user| LDAP[LDAP ou=Aliases]
-    Worker -->|一致性檢查| LDAP
+    Worker -->|依 id 寫入 task| LDAP[LDAP ou=Aliases]
+    Worker -->|Snapshot 讀取| LDAP
     LDAP -->|重建完整狀態| CacheDB
 ```
 
@@ -63,8 +63,6 @@ PostgreSQL 本地快取不是 LDAP 的替代品。LDAP 同步 worker 完成佇�
 API 端所有需要同步到 LDAP 的變更都經過同一組寫入函式（`apps/subscriptions/writes.py`）：同一 transaction 內先鎖住該 alias、再更新快取、再排入 task。鎖持有到 commit，所以同一 alias 的 task `id` 順序就是變更生效的順序。細節見 [04 API and DB](./04-api-and-db.md#runtime-behavior)。
 
 Flush 由 sync module（`apps/subscriptions/sync.py`）的 `sync.flush(directory)` 一次執行：依 `id` 把 task 交給 Directory 寫入 LDAP，再以 LDAP snapshot 校正快取；仍有 task 在 queue 中的 alias 不會被 snapshot 覆蓋。合約見 [06 同步介面](./06-sync-interface.md)。
-
-> **過渡狀態**：LDAP 同步 worker（`apps/subscriptions/tasks.py`）尚未改用 `SyncTask`，下方「業務規則」與「背景任務」中的 worker 流程仍描述舊實作；worker 將改為透過 [sync interface](./06-sync-interface.md) 依 `id` 處理，完成前此分支不得部署。
 
 ## 主要資料流
 
@@ -86,9 +84,9 @@ sequenceDiagram
     A->>R: rate-limit 檢查
     A->>P: 更新本地快取並建立工作
     A-->>B: 接受非同步工作
-    Q->>P: 讀取 alias / user queue
+    Q->>P: 取得 flush lock，依 id 讀取 SyncTask
     Q->>L: 非同步 add/remove/modify
-    Q->>L: 一致性查詢
+    Q->>L: Snapshot 查詢
     Q->>P: 更新本地快取
 ```
 
@@ -99,19 +97,27 @@ sequenceDiagram
 - alias 名稱只接受英數字與連字號，並作為本地識別鍵。
 - 一般使用者只能管理自己的訂閱；`mailAdmin` LDAP 群組映射出的管理員可管理 alias 與成員。
 - 所有 alias 與成員變更先寫入 PostgreSQL 本地快取與工作佇列，再由 LDAP 同步 worker 非同步同步 LDAP。
-- LDAP 同步 worker 先處理 alias 工作，再處理成員工作，最後執行 LDAP 一致性檢查。
-- LDAP operation 失敗時保留工作供下一次 flush 重試；PostgreSQL 工作佇列的順序不代表 LDAP 已完成的順序。
+- 每次 Flush 是單一有序流程：alias 與成員 task 共用 `SyncTask`，依 `id` 升冪寫入 LDAP，最後以 Snapshot 校正快取。
+- 每個 task 有一個 Outcome：Done（LDAP 已是預期狀態，包含「本來就是」）與 Obsolete（例如 alias 已不在 LDAP）會移出 queue；Retry 保留 task 供下一次 Flush 重試，並在本次 Flush 中擋住同一 alias 的後續 task，其他 alias 照常處理。
+- 同一節點同時只有一個 Flush：flush lock 是 PostgreSQL session advisory lock，Flush 結束、出錯或 process 死掉時立即釋放。
+- Task budget 為 300 秒：超過後不再交出新 task，進行中的 task 正常完成，其餘留在 queue；Snapshot 仍會執行。
+- Snapshot budget 為 60 秒：逾時或任何讀取錯誤都不套用部分結果，快取保持不動。LDAP 本身無法使用時 Flush 立即停止並跳過 Snapshot。
 - LDAP bind、TLS 憑證驗證與使用者群組查詢是外部身份服務責任；本地 PostgreSQL 不取代這些查詢。
 
 ## 背景任務
 
-Django-Q schedule 每 30 分鐘執行 `flush_ldap_tasks`，其流程是：
+Django-Q schedule 每 30 分鐘執行 `flush_ldap_tasks`（`apps/subscriptions/tasks.py`），其流程是：
 
-1. 處理 `AliasTaskQueue`。
-2. 處理 `UserTaskQueue`。
-3. 從 LDAP 重建或刪除 PostgreSQL 的 `Alias` 快取。
+1. `FLUSH_ENABLED` 不是 `1` 時只記 `flush_disabled` 並結束。
+2. 建立 LDAP Directory（`apps/subscriptions/ldap_directory.py`），呼叫 `sync.flush(directory)`，最後一定關閉 Directory。
+3. `sync.flush` 取得 PostgreSQL flush lock；已被持有時回傳 busy，worker 記 `flush_lock_busy`，不連 LDAP。
+4. 依 `id` 把 Flush 開始時已存在的 task 交給 Directory，受 300 秒 Task budget 限制。
+5. 以 Snapshot（60 秒 budget）校正沒有待處理 task 的 alias。
+6. worker 記一筆 `flush_summary` JSON event（各 Outcome 數量、停止原因、Snapshot 狀態與更新／略過的 alias、耗時、最舊待處理 task 的秒數）；每個 Obsolete task 記一筆 `task_obsolete`，每個 Retry 由 LDAP Directory 記 `alias_task_failed`／`user_task_failed`（含 LDAP 錯誤）。非預期例外記 `flush_unexpected_error`。
 
-Redis lock 用來避免重疊 flush，但不是節點 fencing。失敗工作會保留在 queue；告警門檻與詳細處置屬於 [05 Migration](./05-migration.md) 的營運範圍。
+Django-Q 的 task kill timeout 為 480 秒，高於 Flush 最壞情況（連線 10 + Task budget 300 + 最後一個 task 的重試約 76 + Snapshot budget 60，約 446 秒）；re-delivery delay（`retry`）為 540 秒，高於 kill timeout，因此健康的 Flush 不會被中途終止或重複啟動。
+
+flush lock 只防止同一節點重疊 Flush，不是節點 fencing。失敗工作會保留在 queue；告警門檻與詳細處置屬於 [05 Migration](./05-migration.md) 的營運範圍。
 
 ## HA 設計與限制
 
@@ -121,7 +127,7 @@ Redis lock 用來避免重疊 flush，但不是節點 fencing。失敗工作會�
 
 - 網路分割時可能出現多個 ACTIVE，不能保證只有一個節點寫 LDAP。
 - `FLUSH_ENABLED=0` 是設定 gate，不是 LDAP-side 強制限制；錯誤覆寫或 stale LDAP 同步 worker 仍可能造成寫入。
-- Redis flush lock 只有 TTL，不能證明 lock owner 或節點仍是 ACTIVE。
+- PostgreSQL flush lock 只存在於各節點自己的資料庫，不能證明節點仍是 ACTIVE。
 - `db_sync.sh` 是 PostgreSQL dump/restore，不是 streaming replication，也不提供一致性快照或災難復原保證。
 - 角色變更會重啟 web/worker；切換、同步與 fencing 仍需要外部維運流程。
 
