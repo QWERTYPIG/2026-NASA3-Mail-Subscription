@@ -15,7 +15,7 @@ Start with `README.md` for the project entry point and repository layout, then r
 | `docs/03-setup.md` | Development setup, pre-launch validation gate, Compose startup, testing, and troubleshooting. |
 | `docs/04-api-and-db.md` | API routes, session/CSRF, permissions, requests/responses, schema, queue behavior, and known implementation differences. |
 | `docs/05-migration.md` | Deployment, migrations, HA monitor, DB synchronization, backup, restore, and rollback. |
-| `docs/06-sync-interface.md` | Contract between the LDAP sync side (`tasks.py`) and the task queue/cache (`sync.py`); read before changing either. |
+| `docs/06-sync-interface.md` | Contract of `sync.flush` (`sync.py`, owns the Queue and Cache) and the Directory it writes to (LDAP Directory, called from `tasks.py`); read before changing either. |
 
 ## Testing
 

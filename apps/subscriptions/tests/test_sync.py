@@ -1,12 +1,15 @@
-"""Tests for the sync interface (``apps.subscriptions.sync``). No LDAP access."""
+"""Tests for the Flush (``sync.flush`` given a Directory). No LDAP, no mocks."""
 
-from unittest.mock import patch
+from datetime import timedelta
 
+from django.db import DEFAULT_DB_ALIAS, OperationalError, connection, connections
 from django.test import TestCase
+from django.utils import timezone
 
 from .. import sync, writes
 from ..models import Alias, AliasMember, SyncTask
-from ..sync import Outcome
+from ..sync import DirectoryUnavailable, Outcome, SnapshotStatus, StopReason
+from .fakes import FakeDirectory
 
 
 def queue():
@@ -19,237 +22,347 @@ def members(alias_name):
     )
 
 
-def drain(session, outcome=Outcome.DONE):
-    """Take every task the session gives, report ``outcome``, return them."""
-    seen = []
-    while (task := session.next_task()) is not None:
-        seen.append(task)
-        session.report(task, outcome)
-    return seen
-
-
-def enqueue(alias_name, kind="member", action="add", user_uid="u", **extra):
-    if kind == "alias":
-        user_uid = None
-    return SyncTask.objects.create(
-        kind=kind, action=action, alias_name=alias_name, user_uid=user_uid, **extra
-    )
+def described(tasks):
+    return [(t.alias_name, t.kind, t.action, t.user_uid) for t in tasks]
 
 
 class TaskOrderTest(TestCase):
-    def test_tasks_come_in_id_order_across_kinds(self):
+    def test_tasks_are_applied_in_id_order_across_kinds(self):
         writes.create_alias("a")
         writes.add_member("a", "x")
         writes.create_alias("b")
         writes.remove_member("a", "x")
-        expected = list(SyncTask.objects.values_list("id", flat=True))
+        directory = FakeDirectory(snapshot={"a": set(), "b": set()})
 
-        with sync.flush_session() as session:
-            seen = drain(session)
-
-        self.assertEqual([t.id for t in seen], expected)
-        self.assertEqual(queue(), [])
-
-    def test_task_format(self):
-        enqueue("a", kind="alias", action="remove")
-        enqueue("a", user_uid="x")
-        with sync.flush_session() as session:
-            alias_task = session.next_task()
-            session.report(alias_task, Outcome.DONE)
-            member_task = session.next_task()
+        sync.flush(directory)
 
         self.assertEqual(
-            (alias_task.kind, alias_task.action, alias_task.alias_name, alias_task.user_uid),
-            ("alias", "remove", "a", None),
-        )
-        self.assertEqual(
-            (member_task.kind, member_task.action, member_task.user_uid),
-            ("member", "add", "x"),
-        )
-        self.assertIsInstance(member_task, sync.Task)
-
-    def test_four_step_scenario_keeps_add_y(self):
-        """delete A -> (add x rejected) -> create A -> add y reaches LDAP."""
-        writes.create_alias("A")
-        SyncTask.objects.all().delete()
-
-        writes.delete_alias("A")
-        with self.assertRaises(writes.AliasNotFound):
-            writes.add_member("A", "x")
-        writes.create_alias("A")
-        writes.add_member("A", "y")
-
-        with sync.flush_session() as session:
-            seen = drain(session)
-
-        self.assertEqual(
-            [(t.kind, t.action, t.user_uid) for t in seen],
-            [("alias", "remove", None), ("alias", "add", None), ("member", "add", "y")],
+            described(directory.applied),
+            [
+                ("a", "alias", "add", None),
+                ("a", "member", "add", "x"),
+                ("b", "alias", "add", None),
+                ("a", "member", "remove", "x"),
+            ],
         )
         self.assertEqual(queue(), [])
 
-    def test_late_commit_with_lower_id_is_still_given(self):
-        """No cursor: a lower id that shows up later is not skipped."""
-        enqueue("b", id=5)
-        with sync.flush_session() as session:
-            first = session.next_task()
-            session.report(first, Outcome.DONE)
-            enqueue("a", id=3)  # committed after id 5 was handed out
-            second = session.next_task()
-        self.assertEqual((first.id, second.id), (5, 3))
+    def test_delete_recreate_add_member_keeps_order(self):
+        writes.create_alias("a")
+        writes.delete_alias("a")
+        writes.create_alias("a")
+        writes.add_member("a", "y")
+        directory = FakeDirectory(snapshot={"a": {"y"}})
 
-    def test_session_only_gives_tasks_that_existed_at_open(self):
-        enqueue("a")
-        with sync.flush_session() as session:
-            enqueue("a", user_uid="later")
-            seen = drain(session)
-        self.assertEqual([t.user_uid for t in seen], ["u"])
-        self.assertEqual(queue(), [("member", "add", "a", "later")])
+        sync.flush(directory)
+
+        self.assertEqual(
+            described(directory.applied),
+            [
+                ("a", "alias", "add", None),
+                ("a", "alias", "remove", None),
+                ("a", "alias", "add", None),
+                ("a", "member", "add", "y"),
+            ],
+        )
+        self.assertEqual(members("a"), {"y"})
+
+    def test_tasks_enqueued_during_flush_wait_for_next_flush(self):
+        writes.create_alias("a")
+        late = []
+
+        def enqueue_during_flush(task):
+            if not late:
+                late.append(writes.add_member("a", "late"))
+
+        directory = FakeDirectory(on_apply=enqueue_during_flush, snapshot={"a": set()})
+
+        report = sync.flush(directory)
+
+        self.assertEqual(described(directory.applied), [("a", "alias", "add", None)])
+        self.assertEqual(queue(), [("member", "add", "a", "late")])
+        self.assertEqual(report.stop_reason, StopReason.NONE)
 
 
 class OutcomeTest(TestCase):
     def test_done_and_obsolete_leave_the_queue(self):
-        enqueue("a", user_uid="x")
-        enqueue("a", user_uid="y")
-        with sync.flush_session() as session:
-            session.report(session.next_task(), Outcome.DONE)
-            session.report(session.next_task(), "obsolete")  # plain string ok
+        writes.create_alias("a")
+        obsolete = writes.add_member("a", "x")
+        directory = FakeDirectory(outcomes={obsolete.id: Outcome.OBSOLETE}, snapshot={"a": set()})
+
+        report = sync.flush(directory)
+
         self.assertEqual(queue(), [])
+        self.assertEqual(report.done_count, 1)
+        self.assertEqual(report.obsolete_count, 1)
+        self.assertEqual(described(report.obsoleted), [("a", "member", "add", "x")])
 
-    def test_retry_blocks_that_alias_only(self):
-        a1 = enqueue("a", user_uid="1")
-        enqueue("b", user_uid="2")
-        a3 = enqueue("a", user_uid="3")
-        enqueue("b", user_uid="4")
+    def test_retry_stays_queued_and_blocks_only_its_alias(self):
+        writes.create_alias("a")
+        writes.add_member("a", "x")
+        writes.create_alias("b")
+        writes.add_member("b", "y")
+        directory = FakeDirectory(outcomes={"a": Outcome.RETRY}, snapshot={"b": {"y"}})
 
-        with sync.flush_session() as session:
-            first = session.next_task()
-            session.report(first, Outcome.RETRY)
-            rest = drain(session)
+        report = sync.flush(directory)
 
-        self.assertEqual(first.id, a1.id)
-        self.assertEqual([t.user_uid for t in rest], ["2", "4"])
         self.assertEqual(
-            list(SyncTask.objects.values_list("id", flat=True)), [a1.id, a3.id]
+            described(directory.applied),
+            [
+                ("a", "alias", "add", None),
+                ("b", "alias", "add", None),
+                ("b", "member", "add", "y"),
+            ],
+        )
+        self.assertEqual(queue(), [("alias", "add", "a", None), ("member", "add", "a", "x")])
+        self.assertEqual(report.retry_count, 1)
+        self.assertEqual(described(report.retried), [("a", "alias", "add", None)])
+        self.assertEqual(report.done_count, 2)
+
+    def test_directory_unavailable_stops_flush_and_skips_snapshot(self):
+        writes.create_alias("a")
+        writes.create_alias("b")
+        directory = FakeDirectory(outcomes={"a": DirectoryUnavailable()}, snapshot={})
+
+        report = sync.flush(directory)
+
+        self.assertEqual(described(directory.applied), [("a", "alias", "add", None)])
+        self.assertEqual(queue(), [("alias", "add", "a", None), ("alias", "add", "b", None)])
+        self.assertEqual(directory.snapshot_calls, 0)
+        self.assertEqual(report.stop_reason, StopReason.DIRECTORY_UNAVAILABLE)
+        self.assertEqual(report.snapshot_status, SnapshotStatus.NOT_TAKEN)
+        self.assertEqual(set(Alias.objects.values_list("alias_name", flat=True)), {"a", "b"})
+
+    def test_unexpected_error_propagates_and_keeps_task(self):
+        writes.create_alias("a")
+        directory = FakeDirectory(outcomes={"a": RuntimeError("bug")})
+
+        with self.assertRaises(RuntimeError):
+            sync.flush(directory)
+
+        self.assertEqual(queue(), [("alias", "add", "a", None)])
+
+
+class FakeClock:
+    def __init__(self):
+        self.now = 1000.0
+
+    def __call__(self):
+        return self.now
+
+
+class TaskBudgetTest(TestCase):
+    def test_budget_stops_handing_out_tasks_but_snapshot_still_runs(self):
+        for name in ("a", "b", "c"):
+            writes.create_alias(name)
+        clock = FakeClock()
+
+        def slow_apply(task):
+            clock.now += 100
+
+        directory = FakeDirectory(on_apply=slow_apply, snapshot={"a": {"m"}, "b": set()})
+
+        report = sync.flush(directory, task_budget=150, clock=clock)
+
+        # a starts at 0s; b starts at 100s, inside the budget, and finishes
+        # at 200s; c is never handed out.
+        self.assertEqual([t.alias_name for t in directory.applied], ["a", "b"])
+        self.assertEqual(queue(), [("alias", "add", "c", None)])
+        self.assertEqual(report.done_count, 2)
+        self.assertEqual(report.stop_reason, StopReason.BUDGET)
+        self.assertEqual(report.snapshot_status, SnapshotStatus.APPLIED)
+        self.assertEqual(members("a"), {"m"})
+        self.assertEqual(report.snapshot_skipped, ["c"])
+        self.assertEqual(report.elapsed, 200)
+
+    def test_default_budget_is_300_seconds(self):
+        writes.create_alias("a")
+        writes.create_alias("b")
+        clock = FakeClock()
+
+        def slow_apply(task):
+            clock.now += 300
+
+        directory = FakeDirectory(on_apply=slow_apply, snapshot={"a": set()})
+
+        report = sync.flush(directory, clock=clock)
+
+        self.assertEqual([t.alias_name for t in directory.applied], ["a"])
+        self.assertEqual(report.stop_reason, StopReason.BUDGET)
+
+
+def other_connection(test):
+    """A second database session, as another worker process would have."""
+    conn = connections.create_connection(DEFAULT_DB_ALIAS)
+    conn.ensure_connection()
+    test.addCleanup(conn.close)
+    return conn
+
+
+def hold_flush_lock(conn):
+    with conn.cursor() as cursor:
+        cursor.execute(
+            "SELECT pg_advisory_lock(%s, %s)",
+            [sync.FLUSH_LOCK_NAMESPACE, sync.FLUSH_LOCK_KEY],
         )
 
-    def test_retried_task_comes_first_next_session(self):
-        a1 = enqueue("a", user_uid="1")
-        enqueue("a", user_uid="2")
-        with sync.flush_session() as session:
-            session.report(session.next_task(), Outcome.RETRY)
-        with sync.flush_session() as session:
-            self.assertEqual(session.next_task().id, a1.id)
 
-    def test_unreported_task_counts_as_retry(self):
-        a1 = enqueue("a", user_uid="1")
-        enqueue("a", user_uid="2")
-        b = enqueue("b")
-        with sync.flush_session() as session:
-            session.next_task()  # a1, never reported
-            nxt = session.next_task()
-        self.assertEqual(nxt.id, b.id)  # a is blocked
-        self.assertEqual(SyncTask.objects.filter(id=a1.id).count(), 1)
+def flush_lock_is_free(conn):
+    """Take and release the flush lock from ``conn``; True if it was free."""
+    with conn.cursor() as cursor:
+        cursor.execute(
+            "SELECT pg_try_advisory_lock(%s, %s)",
+            [sync.FLUSH_LOCK_NAMESPACE, sync.FLUSH_LOCK_KEY],
+        )
+        free = cursor.fetchone()[0]
+        if free:
+            cursor.execute(
+                "SELECT pg_advisory_unlock(%s, %s)",
+                [sync.FLUSH_LOCK_NAMESPACE, sync.FLUSH_LOCK_KEY],
+            )
+    return free
 
-    def test_unreported_task_at_session_end_stays(self):
-        a1 = enqueue("a")
-        with sync.flush_session() as session:
-            session.next_task()
-        self.assertEqual(list(SyncTask.objects.values_list("id", flat=True)), [a1.id])
 
-    def test_reporting_wrong_task_raises(self):
-        enqueue("a", user_uid="1")
-        enqueue("b", user_uid="2")
-        with sync.flush_session() as session:
-            first = session.next_task()
-            session.report(first, Outcome.DONE)
-            with self.assertRaises(sync.SessionError):
-                session.report(first, Outcome.DONE)  # already reported
-            session.next_task()
-            with self.assertRaises(sync.SessionError):
-                session.report(first, Outcome.DONE)  # not the outstanding one
+class FlushLockTest(TestCase):
+    def test_busy_when_lock_held_by_another_connection(self):
+        writes.create_alias("a")
+        hold_flush_lock(other_connection(self))
+        directory = FakeDirectory()
 
-    def test_unknown_outcome_raises(self):
-        enqueue("a")
-        with sync.flush_session() as session:
-            task = session.next_task()
-            with self.assertRaises(ValueError):
-                session.report(task, "maybe")
+        report = sync.flush(directory)
 
-    def test_closed_session_raises(self):
-        with sync.flush_session() as session:
-            pass
-        with self.assertRaises(sync.SessionError):
-            session.next_task()
+        self.assertTrue(report.busy)
+        self.assertEqual(directory.applied, [])
+        self.assertEqual(directory.snapshot_calls, 0)
+        self.assertEqual(report.snapshot_status, SnapshotStatus.NOT_TAKEN)
+        self.assertEqual(queue(), [("alias", "add", "a", None)])
+
+    def test_lock_released_after_normal_return(self):
+        report = sync.flush(FakeDirectory())
+
+        self.assertFalse(report.busy)
+        self.assertTrue(flush_lock_is_free(other_connection(self)))
+
+    def test_lock_released_after_exception(self):
+        writes.create_alias("a")
+
+        with self.assertRaises(RuntimeError):
+            sync.flush(FakeDirectory(outcomes={"a": RuntimeError("bug")}))
+
+        self.assertTrue(flush_lock_is_free(other_connection(self)))
+
+    def test_alias_write_lock_does_not_block_flush_lock(self):
+        writes.create_alias("a")
+        sync.flush(FakeDirectory(snapshot={"a": set()}))
+        other = other_connection(self)
+        with other.cursor() as cursor:
+            cursor.execute(
+                "SELECT pg_advisory_lock(%s, %s)", [writes.ALIAS_LOCK_NAMESPACE, sync.FLUSH_LOCK_KEY]
+            )
+
+        self.assertFalse(sync.flush(FakeDirectory(snapshot={"a": set()})).busy)
 
 
 class SnapshotTest(TestCase):
-    def test_snapshot_overwrites_members(self):
-        Alias.objects.create(alias_name="a")
-        AliasMember.objects.create(alias_id="a", user_uid="keep")
-        AliasMember.objects.create(alias_id="a", user_uid="gone")
+    def test_snapshot_makes_members_match_directory(self):
+        writes.create_alias("a")
+        writes.add_member("a", "keep")
+        writes.add_member("a", "gone")
+        directory = FakeDirectory(snapshot={"a": {"keep", "new"}})
 
-        with sync.flush_session() as session:
-            result = session.apply_snapshot({"a": {"keep", "new"}})
+        report = sync.flush(directory)
 
         self.assertEqual(members("a"), {"keep", "new"})
-        self.assertEqual(result.updated, ["a"])
-        self.assertEqual(result.skipped, [])
+        self.assertEqual(report.snapshot_status, SnapshotStatus.APPLIED)
+        self.assertEqual(report.snapshot_updated, ["a"])
+        self.assertEqual(report.snapshot_skipped, [])
 
-    def test_snapshot_creates_and_deletes_aliases(self):
-        Alias.objects.create(alias_name="cache-only")
-        AliasMember.objects.create(alias_id="cache-only", user_uid="x")
+    def test_snapshot_adds_directory_aliases_and_deletes_missing_ones(self):
+        writes.create_alias("cache-only")
+        writes.add_member("cache-only", "x")
+        directory = FakeDirectory(snapshot={"ldap-only": {"y"}, "empty": set()})
 
-        with sync.flush_session() as session:
-            session.apply_snapshot({"ldap-only": {"y"}, "empty": set()})
+        report = sync.flush(directory)
 
         self.assertEqual(
             set(Alias.objects.values_list("alias_name", flat=True)), {"ldap-only", "empty"}
         )
         self.assertEqual(members("ldap-only"), {"y"})
-        self.assertFalse(AliasMember.objects.filter(alias_id="cache-only").exists())
+        self.assertEqual(members("cache-only"), set())
+        self.assertEqual(report.snapshot_updated, ["cache-only", "empty", "ldap-only"])
 
     def test_snapshot_keeps_display_fields(self):
-        Alias.objects.create(alias_name="a", display_name="A", description="d")
-        with sync.flush_session() as session:
-            session.apply_snapshot({"a": set()})
+        writes.create_alias("a", display_name="A", description="d")
+
+        sync.flush(FakeDirectory(snapshot={"a": set()}))
+
         alias = Alias.objects.get(alias_name="a")
         self.assertEqual((alias.display_name, alias.description), ("A", "d"))
 
     def test_snapshot_skips_aliases_with_queued_tasks(self):
         writes.create_alias("pending")
-        writes.add_member("pending", "y")  # queued, not yet in LDAP
-        Alias.objects.create(alias_name="clean")
+        writes.add_member("pending", "y")
+        writes.create_alias("clean")
+        directory = FakeDirectory(outcomes={"pending": Outcome.RETRY}, snapshot={"clean": {"z"}})
 
-        with sync.flush_session() as session:
-            result = session.apply_snapshot({"clean": {"z"}})
+        report = sync.flush(directory)
 
-        self.assertEqual(result.skipped, ["pending"])
+        self.assertEqual(report.snapshot_skipped, ["pending"])
+        self.assertEqual(report.snapshot_updated, ["clean"])
         self.assertEqual(members("pending"), {"y"})
         self.assertEqual(members("clean"), {"z"})
 
-    def test_snapshot_skips_alias_left_on_retry(self):
+    def test_failed_snapshot_leaves_cache_untouched(self):
         writes.create_alias("a")
-        writes.add_member("a", "y")
-        with sync.flush_session() as session:
-            session.report(session.next_task(), Outcome.RETRY)
-            result = session.apply_snapshot({})
-        self.assertEqual(result.skipped, ["a"])
-        self.assertTrue(Alias.objects.filter(alias_name="a").exists())
+        writes.add_member("a", "x")
+        directory = FakeDirectory(snapshot=DirectoryUnavailable())
 
-    def test_snapshot_does_not_skip_pending_delete_of_other_alias(self):
-        """A queued alias/remove protects only that alias."""
-        enqueue("old", kind="alias", action="remove")
-        Alias.objects.create(alias_name="a")
-        with sync.flush_session() as session:
-            result = session.apply_snapshot({"old": {"x"}, "a": {"m"}})
-        self.assertEqual(result.skipped, ["old"])
-        self.assertFalse(Alias.objects.filter(alias_name="old").exists())
-        self.assertEqual(members("a"), {"m"})
+        report = sync.flush(directory)
 
-    def test_snapshot_takes_alias_lock_per_alias(self):
-        Alias.objects.create(alias_name="b")
-        with patch.object(sync, "_lock_aliases", wraps=sync._lock_aliases) as lock:
-            with sync.flush_session() as session:
-                session.apply_snapshot({"a": set(), "c": set()})
-        self.assertEqual([c.args[0] for c in lock.call_args_list], [["a"], ["b"], ["c"]])
+        self.assertEqual(report.snapshot_status, SnapshotStatus.FAILED)
+        self.assertEqual(report.stop_reason, StopReason.NONE)
+        self.assertEqual(report.snapshot_updated, [])
+        self.assertEqual(members("a"), {"x"})
+
+    def test_snapshot_waits_for_the_alias_write_lock(self):
+        # Another connection is in the middle of a write to "a". (Nothing on
+        # this test's connection may touch "a": its transaction-level alias
+        # locks last until the test ends.)
+        with other_connection(self).cursor() as cursor:
+            cursor.execute(
+                "SELECT pg_advisory_lock(%s, hashtext(%s))", [writes.ALIAS_LOCK_NAMESPACE, "a"]
+            )
+        with connection.cursor() as cursor:
+            cursor.execute("SET statement_timeout = '500ms'")
+        self.addCleanup(lambda: connection.cursor().execute("RESET statement_timeout"))
+
+        with self.assertRaises(OperationalError):  # gave up waiting for the lock
+            sync.flush(FakeDirectory(snapshot={"a": {"m"}}))
+
+        self.assertFalse(Alias.objects.filter(alias_name="a").exists())
+
+
+class ReportTest(TestCase):
+    def test_oldest_waiting_task_age(self):
+        writes.create_alias("a")
+        writes.create_alias("b")
+        SyncTask.objects.filter(alias_name="a").update(
+            created_at=timezone.now() - timedelta(days=2)
+        )
+        directory = FakeDirectory(outcomes={"a": Outcome.RETRY}, snapshot={})
+
+        report = sync.flush(directory)
+
+        self.assertAlmostEqual(
+            report.oldest_task_age, timedelta(days=2).total_seconds(), delta=60
+        )
+
+    def test_oldest_waiting_task_age_is_none_when_queue_empty(self):
+        writes.create_alias("a")
+
+        report = sync.flush(FakeDirectory(snapshot={"a": set()}))
+
+        self.assertIsNone(report.oldest_task_age)
+        self.assertFalse(report.busy)
+        self.assertEqual(report.stop_reason, StopReason.NONE)
+        self.assertEqual(report.snapshot_status, SnapshotStatus.APPLIED)
