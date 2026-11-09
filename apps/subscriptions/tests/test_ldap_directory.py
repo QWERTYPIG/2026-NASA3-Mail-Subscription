@@ -9,6 +9,7 @@ import json
 import os
 import socket
 import ssl
+from dataclasses import replace
 from unittest.mock import patch
 
 from django.test import SimpleTestCase
@@ -34,7 +35,7 @@ from ldap3.core.exceptions import (
     LDAPUnwillingToPerformResult,
 )
 
-from ..ldap_directory import LdapDirectory
+from ..ldap_directory import LdapConfig, LdapDirectory
 from ..sync import DirectoryUnavailable, Outcome, Task
 
 MODULE = "apps.subscriptions.ldap_directory"
@@ -72,15 +73,10 @@ class LdapDirectoryTestCase(SimpleTestCase):
         return patcher.start()
 
     def make_directory(self, **overrides):
-        config = {
-            "uri": URI,
-            "bind_dn": BIND_DN,
-            "bind_password": "secret",
-            "ca_cert_file": "/etc/ldap/ca.pem",
-            "clock": lambda: self.now,
-        }
-        config.update(overrides)
-        return LdapDirectory(**config)
+        config = LdapConfig(
+            uri=URI, bind_dn=BIND_DN, bind_password="secret", ca_cert_file="/etc/ldap/ca.pem"
+        )
+        return LdapDirectory(replace(config, **overrides), clock=lambda: self.now)
 
     def log_events(self, captured):
         return [json.loads(record.getMessage()) for record in captured.records]
@@ -212,7 +208,15 @@ class LastMemberRemovalTest(LdapDirectoryTestCase):
                 self.conn.modify.reset_mock()
                 self.conn.modify.side_effect = [LDAPObjectClassViolationResult(), reply]
 
-                self.assertIs(self.directory.apply(member_task("remove")), expected)
+                if expected is Outcome.RETRY:
+                    with self.assertLogs("mailsub-worker", level="ERROR") as captured:
+                        outcome = self.directory.apply(member_task("remove"))
+                    [event] = self.log_events(captured)
+                    self.assertEqual(event["event"], "user_task_failed")
+                else:
+                    outcome = self.directory.apply(member_task("remove"))
+
+                self.assertIs(outcome, expected)
                 self.assertEqual(self.conn.modify.call_count, 2)
 
 

@@ -37,7 +37,7 @@ Guarantees:
 """
 
 import time
-from collections.abc import Mapping, Set
+from collections.abc import Callable, Mapping, Set
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Protocol
@@ -117,8 +117,10 @@ class SnapshotStatus(str, Enum):
 
 @dataclass
 class FlushReport:
+    """What one Flush did. Each Outcome has its Tasks in a list and a count."""
+
     busy: bool = False  # the flush lock was held elsewhere; nothing ran
-    done_count: int = 0
+    done: list[Task] = field(default_factory=list)
     retried: list[Task] = field(default_factory=list)
     obsoleted: list[Task] = field(default_factory=list)
     stop_reason: StopReason = StopReason.NONE
@@ -129,15 +131,24 @@ class FlushReport:
     oldest_task_age: float | None = None  # seconds; None if the Queue is empty
 
     @property
-    def retry_count(self):
+    def done_count(self) -> int:
+        return len(self.done)
+
+    @property
+    def retry_count(self) -> int:
         return len(self.retried)
 
     @property
-    def obsolete_count(self):
+    def obsolete_count(self) -> int:
         return len(self.obsoleted)
 
 
-def flush(directory, *, task_budget=DEFAULT_TASK_BUDGET, clock=time.monotonic):
+def flush(
+    directory: Directory,
+    *,
+    task_budget: float = DEFAULT_TASK_BUDGET,
+    clock: Callable[[], float] = time.monotonic,
+) -> FlushReport:
     """Run one Flush against ``directory`` and return a ``FlushReport``.
 
     ``task_budget`` (seconds) and ``clock`` (monotonic seconds) are for tests.
@@ -209,7 +220,7 @@ def _apply_tasks(directory, report, task_budget, started, clock):
         if outcome is Outcome.OBSOLETE:
             report.obsoleted.append(task)
         else:
-            report.done_count += 1
+            report.done.append(task)
 
 
 def _take_snapshot(directory, report):

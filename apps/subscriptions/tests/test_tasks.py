@@ -15,7 +15,7 @@ from ..log import log_event
 from ..models import SyncTask
 from ..sync import Outcome
 from .fakes import FakeDirectory
-from .test_sync import hold_flush_lock, other_connection
+from .support import hold_flush_lock, other_connection
 
 LOGGER = "mailsub-worker"
 
