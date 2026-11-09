@@ -6,6 +6,7 @@ from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.test import SimpleTestCase, TestCase
+from django_auth_ldap.backend import LDAPBackend
 from ldap3.core.exceptions import LDAPException
 from rest_framework.test import APIClient
 
@@ -19,6 +20,13 @@ def make_alias(alias_name, members=(), **fields):
     for uid in members:
         AliasMember.objects.create(alias=alias, user_uid=uid)
     return alias
+
+
+def ldap_user_with_gids(*gids):
+    """Stand-in for the user django-auth-ldap populates, with these gidNumbers."""
+    user = MagicMock()
+    user.ldap_user.attrs = {"gidNumber": [gid.encode() for gid in gids]}
+    return user
 
 
 def member_uids(alias):
@@ -555,6 +563,12 @@ class AdminAliasUserAddApiTest(TestCase):
             members=["b12345678"],
         )
 
+        populate = patch.object(
+            LDAPBackend, "populate_user", return_value=ldap_user_with_gids("450")
+        )
+        self.populate_user = populate.start()
+        self.addCleanup(populate.stop)
+
     def test_add_requires_auth(self):
         resp = self.client.post(
             "/api/v1/manage/aliases/toadd/users/", {"uid": "b00000000"}, format="json"
@@ -589,7 +603,8 @@ class AdminAliasUserAddApiTest(TestCase):
         resp = self.client.post(
             "/api/v1/manage/aliases/toadd/users/", {"uid": "b12345678"}, format="json"
         )
-        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.status_code, 409)
+        self.assertEqual(resp.data["code"], "CONFLICT")
 
         alias = Alias.objects.get(alias_name="toadd")
         self.assertEqual(member_uids(alias).count("b12345678"), 1)
@@ -600,14 +615,49 @@ class AdminAliasUserAddApiTest(TestCase):
         ).exists()
         self.assertFalse(task)  # Shouldn't create task if already exists
 
-    def test_invalid_uid_format(self):
+    def test_add_normalizes_uid(self):
         self.client.force_authenticate(user=self.admin_user)
         resp = self.client.post(
-            "/api/v1/manage/aliases/toadd/users/", {"uid": "invalid"}, format="json"
+            "/api/v1/manage/aliases/toadd/users/", {"uid": "  B00000000 "}, format="json"
+        )
+        self.assertEqual(resp.status_code, 200)
+
+        alias = Alias.objects.get(alias_name="toadd")
+        self.assertEqual(member_uids(alias), ["b12345678", "b00000000"])
+
+    def test_invalid_uid_format(self):
+        self.client.force_authenticate(user=self.admin_user)
+        for uid in ("bad-uid", "a" * 51):
+            with self.subTest(uid=uid):
+                resp = self.client.post(
+                    "/api/v1/manage/aliases/toadd/users/", {"uid": uid}, format="json"
+                )
+                self.assertEqual(resp.status_code, 400)
+                self.assertEqual(resp.data["code"], "VALIDATION_ERROR")
+                self.assertIn("uid", resp.data["details"])
+        self.populate_user.assert_not_called()
+
+    def test_uid_not_in_ldap(self):
+        self.populate_user.return_value = None
+        self.client.force_authenticate(user=self.admin_user)
+        resp = self.client.post(
+            "/api/v1/manage/aliases/toadd/users/", {"uid": "b00000000"}, format="json"
         )
         self.assertEqual(resp.status_code, 400)
         self.assertEqual(resp.data["code"], "VALIDATION_ERROR")
         self.assertIn("uid", resp.data["details"])
+        self.assertFalse(SyncTask.objects.exists())
+
+    def test_uid_with_disallowed_gid(self):
+        self.populate_user.return_value = ldap_user_with_gids("999")
+        self.client.force_authenticate(user=self.admin_user)
+        resp = self.client.post(
+            "/api/v1/manage/aliases/toadd/users/", {"uid": "b00000000"}, format="json"
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.data["code"], "VALIDATION_ERROR")
+        self.assertIn("uid", resp.data["details"])
+        self.assertFalse(SyncTask.objects.exists())
 
     def test_missing_alias(self):
         self.client.force_authenticate(user=self.admin_user)
@@ -687,11 +737,26 @@ class AdminAliasUserDeleteApiTest(TestCase):
         ).exists()
         self.assertFalse(task)  # Shouldn't create task if user wasn't subscribed
 
-    def test_invalid_uid_format(self):
+    def test_malformed_uid_returns_400(self):
         self.client.force_authenticate(user=self.admin_user)
-        resp = self.client.delete("/api/v1/manage/aliases/toremove/users/invalid/")
-        self.assertEqual(resp.status_code, 400)
-        self.assertEqual(resp.data["code"], "VALIDATION_ERROR")
+        for uid in ("bad-uid", "a" * 51):
+            with self.subTest(uid=uid):
+                resp = self.client.delete(f"/api/v1/manage/aliases/toremove/users/{uid}/")
+                self.assertEqual(resp.status_code, 400)
+                self.assertEqual(resp.data["code"], "VALIDATION_ERROR")
+                self.assertIn("uid", resp.data["details"])
+
+        alias = Alias.objects.get(alias_name="toremove")
+        self.assertEqual(len(member_uids(alias)), 2)
+        self.assertFalse(SyncTask.objects.exists())
+
+    def test_delete_normalizes_uid_case(self):
+        self.client.force_authenticate(user=self.admin_user)
+        resp = self.client.delete("/api/v1/manage/aliases/toremove/users/B12345678/")
+        self.assertEqual(resp.status_code, 204)
+
+        alias = Alias.objects.get(alias_name="toremove")
+        self.assertEqual(member_uids(alias), ["b98765432"])
 
     def test_missing_alias(self):
         self.client.force_authenticate(user=self.admin_user)

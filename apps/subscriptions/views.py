@@ -15,7 +15,8 @@ from .serializers import (
     AliasUpdateSerializer,
     SubscriptionSerializer,
     UserSubscriptionUpdateSerializer,
-    AddAliasMemberSerializer
+    AddAliasMemberSerializer,
+    MemberUidSerializer,
 )
 from .throttles import UserSubscriptionCooldownThrottle
 from .utils import not_found_response, internal_error_response, validation_error_response, conflict_response
@@ -70,8 +71,10 @@ class AdminAliasUserDetailView(APIView):
     permission_classes = [IsAdminUser]
 
     def delete(self, request, alias_name, uid):
-        if not uid:
-            return validation_error_response({"uid": ["User not found."]})
+        serializer = MemberUidSerializer(data={"uid": uid})
+        if not serializer.is_valid():
+            return validation_error_response(serializer.errors)
+        uid = serializer.validated_data["uid"]
 
         try:
             writes.remove_member(alias_name, uid)

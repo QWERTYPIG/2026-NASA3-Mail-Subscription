@@ -111,9 +111,9 @@
 ### `DELETE /api/v1/manage/aliases/{alias_name}/users/{uid}/`
 
 - **權限**：Admin。
-- **Request/path**：無 body。`uid` 是 Django `<str:uid>`；空字串不匹配 route，且不做 trim、lowercase 或格式 validation，必須精確匹配 `alias_member.user_uid`。
+- **Request/path**：無 body。`uid` 是 Django `<str:uid>`（空字串不匹配 route）；server 以與 member add 相同規則 trim/lowercase，最多 50 字元、僅英數字，不查 LDAP，正規化後須匹配 `alias_member.user_uid`。
 - **Success**：`204`，無 body。
-- **主要 errors**：alias 不存在或 UID 不在 alias 為 `404` custom `NOT_FOUND`；未預期錯誤 `500` custom。
+- **主要 errors**：UID 格式錯誤 `400` custom `VALIDATION_ERROR`（`details.uid`）；alias 不存在或格式正確但不在 alias 的 UID 為 `404` custom `NOT_FOUND`；未預期錯誤 `500` custom。
 - **Side effects**：transactionally 刪除該 `alias_member` row，建立 `sync_task(kind="member", action="remove")`。
 
 <a id="subscriptions"></a>
@@ -179,10 +179,9 @@ curl --fail-with-body -sS -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
 
 | Area | Actual behavior | Frontend/test mismatch |
 |---|---|---|
-| Member add | duplicate UID 回 `409`；POST 成功先更新 PostgreSQL、再排 queue。 | 舊 test `test_add_duplicate` 仍期待 `200`；UI 文案稱立即生效。 |
-| Member delete | 不驗證 UID 格式；不在 alias 即 `404`。 | 舊 tests 曾期待 invalid UID `400`。 |
+| Member add | duplicate UID 回 `409`；POST 成功先更新 PostgreSQL、再排 queue。 | UI 文案稱立即生效。 |
 | Subscription cooldown | 實際為 10 分鐘；LDAP schedule 為 30 分鐘。 | frontend success toast 只說「30 分鐘內生效」，429 嘗試讀未定義的 `response.data.detail`。 |
-| UID casing | POST normalized to lowercase；frontend 成功後仍以原始 trimmed input 更新 local state。 | 大寫輸入可能使後續 delete path 與 backend cache 不一致。 |
+| UID casing | POST 與 DELETE 都 normalize 為 lowercase；frontend 成功後仍以原始 trimmed input 更新 local state。 | 大寫輸入在重新載入前會以大寫顯示，與 backend cache 不一致。 |
 | Member timing | member add/delete 先改 PostgreSQL、非同步同步 LDAP。 | `AliasDetail.jsx` 警告文字稱立即生效。 |
 
 敏感設定（`SECRET_KEY`、database/LDAP passwords、cookie/token values）不在本頁記錄。
